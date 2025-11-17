@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::fs;
 
+use crate::helpers::dvm::{OutputFormat, Resolution};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoMetadata {
     pub duration: f64,
@@ -15,79 +17,26 @@ pub struct VideoMetadata {
 }
 
 #[derive(Debug, Clone)]
-pub struct ResolutionConfig {
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub video_bitrate: Option<String>,
-    pub audio_bitrate: Option<String>,
-    pub video_codec: Option<String>,
-    pub audio_codec: Option<String>,
-    pub quality: Option<u32>,
-    pub is_original: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct TransformConfig {
-    pub resolutions: HashMap<String, ResolutionConfig>,
+    pub output_format: OutputFormat,
+    pub resolutions: Vec<Resolution>,
     pub hls_time: u32,
     pub hls_list_size: u32,
     pub segment_type: String,
+    pub video_codec: String,
+    pub quality: u32,
 }
 
 impl Default for TransformConfig {
     fn default() -> Self {
-        let mut resolutions = HashMap::new();
-
-        // 360p
-        resolutions.insert(
-            "360p".to_string(),
-            ResolutionConfig {
-                width: Some(640),
-                height: Some(360),
-                video_bitrate: None,
-                audio_bitrate: Some("96k".to_string()),
-                video_codec: Some("libx265".to_string()),
-                audio_codec: Some("aac".to_string()),
-                quality: Some(50),
-                is_original: false,
-            },
-        );
-
-        // 720p
-        resolutions.insert(
-            "720p".to_string(),
-            ResolutionConfig {
-                width: Some(1280),
-                height: Some(720),
-                video_bitrate: None,
-                audio_bitrate: None,
-                video_codec: Some("libx265".to_string()),
-                audio_codec: Some("copy".to_string()),
-                quality: Some(65),
-                is_original: false,
-            },
-        );
-
-        // 1080p (original)
-        resolutions.insert(
-            "1080p".to_string(),
-            ResolutionConfig {
-                width: None,
-                height: None,
-                video_bitrate: None,
-                audio_bitrate: None,
-                video_codec: Some("copy".to_string()),
-                audio_codec: Some("copy".to_string()),
-                quality: None,
-                is_original: true,
-            },
-        );
-
         Self {
-            resolutions,
+            output_format: OutputFormat::Hls,
+            resolutions: vec![Resolution::R480p, Resolution::R720p, Resolution::R1080p],
             hls_time: 6,
             hls_list_size: 0,
             segment_type: "fmp4".to_string(),
+            video_codec: "libx265".to_string(),
+            quality: 28,
         }
     }
 }
@@ -111,10 +60,13 @@ struct FfprobeStream {
     height: Option<u32>,
 }
 
+#[derive(Debug)]
 pub struct ProcessedVideo {
-    pub master_playlist: PathBuf,
+    pub output_format: OutputFormat,
+    pub master_playlist: Option<PathBuf>,
     pub stream_playlists: Vec<PathBuf>,
     pub segments: Vec<PathBuf>,
+    pub video_files: Vec<PathBuf>,
     pub metadata: VideoMetadata,
 }
 
@@ -170,13 +122,13 @@ pub async fn get_video_metadata(url: &str) -> Result<VideoMetadata, Box<dyn std:
     })
 }
 
-/// Process video to HLS format
+/// Process video to the specified format
 pub async fn process_video(
     url: &str,
     output_dir: &Path,
     config: &TransformConfig,
 ) -> Result<ProcessedVideo, Box<dyn std::error::Error>> {
-    log::info!("Processing video: {}", url);
+    log::info!("Processing video: {} (format: {:?})", url, config.output_format);
 
     // Create output directory
     fs::create_dir_all(output_dir).await?;
@@ -191,7 +143,21 @@ pub async fn process_video(
         metadata.size
     );
 
-    // Build FFmpeg command
+    match config.output_format {
+        OutputFormat::Hls => process_video_hls(url, output_dir, config, metadata).await,
+        OutputFormat::Mp4 => process_video_mp4(url, output_dir, config, metadata).await,
+    }
+}
+
+/// Process video to HLS format
+async fn process_video_hls(
+    url: &str,
+    output_dir: &Path,
+    config: &TransformConfig,
+    metadata: VideoMetadata,
+) -> Result<ProcessedVideo, Box<dyn std::error::Error>> {
+    log::info!("Processing to HLS format with {} resolutions", config.resolutions.len());
+
     let output_pattern = output_dir.join("stream_%v.m3u8");
     let master_name = output_dir.join("master.m3u8");
 
@@ -200,80 +166,52 @@ pub async fn process_video(
 
     // Build filter complex for multiple resolutions
     let mut filter_parts = Vec::new();
-    let mut video_maps = Vec::new();
-    let mut audio_maps = Vec::new();
     let mut var_stream_map_parts = Vec::new();
 
-    let resolution_keys: Vec<String> = config.resolutions.keys().cloned().collect();
-    let non_original_count = config
-        .resolutions
-        .values()
-        .filter(|r| !r.is_original)
-        .count();
+    let num_resolutions = config.resolutions.len();
 
     // Build split filter if needed
-    if non_original_count > 0 {
-        let split_outputs: Vec<String> = (0..non_original_count)
+    if num_resolutions > 1 {
+        let split_outputs: Vec<String> = (0..num_resolutions)
             .map(|i| format!("v{}", i))
             .collect();
-        filter_parts.push(format!("[0:v]split={}[{}]", non_original_count, split_outputs.join("][")));
+        filter_parts.push(format!("[0:v]split={}[{}]", num_resolutions, split_outputs.join("][")));
+    } else if num_resolutions == 1 {
+        filter_parts.push("[0:v]copy[v0]".to_string());
     }
 
-    let mut stream_idx = 0;
-    let mut split_idx = 0;
-
-    for key in &resolution_keys {
-        let res_config = &config.resolutions[key];
-
-        if !res_config.is_original {
-            // Add scale filter
-            let input_label = format!("v{}", split_idx);
-            let output_label = format!("v{}out", split_idx);
-
-            if let (Some(width), Some(height)) = (res_config.width, res_config.height) {
-                filter_parts.push(format!("[{}]scale={}:{}[{}]", input_label, width, height, output_label));
-
-                // Map video stream
-                cmd.arg("-map").arg(format!("[{}]", output_label));
-
-                if let Some(codec) = &res_config.video_codec {
-                    cmd.arg(format!("-c:v:{}", stream_idx)).arg(codec);
-                }
-
-                if let Some(quality) = res_config.quality {
-                    cmd.arg(format!("-q:v:{}", stream_idx))
-                        .arg(quality.to_string());
-                }
-
-                split_idx += 1;
-            }
+    for (idx, resolution) in config.resolutions.iter().enumerate() {
+        let input_label = if num_resolutions > 1 {
+            format!("v{}", idx)
         } else {
-            // Original stream - just copy
-            cmd.arg("-map").arg("0:v");
+            "v0".to_string()
+        };
+        let output_label = format!("v{}out", idx);
 
-            if let Some(codec) = &res_config.video_codec {
-                cmd.arg(format!("-c:v:{}", stream_idx)).arg(codec);
-            }
-        }
+        // Add scale filter
+        filter_parts.push(format!(
+            "[{}]scale={}:{}[{}]",
+            input_label,
+            resolution.width(),
+            resolution.height(),
+            output_label
+        ));
+
+        // Map video stream
+        cmd.arg("-map").arg(format!("[{}]", output_label));
+        cmd.arg(format!("-c:v:{}", idx)).arg(&config.video_codec);
+        cmd.arg(format!("-crf:{}", idx)).arg(config.quality.to_string());
 
         // Map audio stream
         cmd.arg("-map").arg("0:a");
-
-        if let Some(codec) = &res_config.audio_codec {
-            cmd.arg(format!("-c:a:{}", stream_idx)).arg(codec);
-        }
-
-        if let Some(bitrate) = &res_config.audio_bitrate {
-            cmd.arg(format!("-b:a:{}", stream_idx)).arg(bitrate);
-        }
+        cmd.arg(format!("-c:a:{}", idx)).arg("aac");
+        cmd.arg(format!("-b:a:{}", idx)).arg("128k");
 
         // Add to variant stream map
-        var_stream_map_parts.push(format!("v:{},a:{}", stream_idx, stream_idx));
-
-        stream_idx += 1;
+        var_stream_map_parts.push(format!("v:{},a:{}", idx, idx));
     }
 
-    // Add filter complex if we have filters
+    // Add filter complex
     if !filter_parts.is_empty() {
         cmd.arg("-filter_complex").arg(filter_parts.join("; "));
     }
@@ -302,7 +240,7 @@ pub async fn process_video(
         return Err(format!("FFmpeg failed: {}", stderr).into());
     }
 
-    log::info!("FFmpeg processing completed");
+    log::info!("FFmpeg HLS processing completed");
 
     // Collect generated files
     let mut stream_playlists = Vec::new();
@@ -329,9 +267,70 @@ pub async fn process_video(
     }
 
     Ok(ProcessedVideo {
-        master_playlist: master_name,
+        output_format: OutputFormat::Hls,
+        master_playlist: Some(master_name),
         stream_playlists,
         segments,
+        video_files: Vec::new(),
+        metadata,
+    })
+}
+
+/// Process video to MP4 single-file format
+async fn process_video_mp4(
+    url: &str,
+    output_dir: &Path,
+    config: &TransformConfig,
+    metadata: VideoMetadata,
+) -> Result<ProcessedVideo, Box<dyn std::error::Error>> {
+    log::info!("Processing to MP4 format with {} resolutions", config.resolutions.len());
+
+    let mut video_files = Vec::new();
+
+    // Process each resolution separately
+    for resolution in &config.resolutions {
+        let output_file = output_dir.join(format!("video_{}.mp4", resolution.as_str()));
+
+        log::info!("Processing {} resolution to {}", resolution.as_str(), output_file.display());
+
+        let mut cmd = Command::new("ffmpeg");
+        cmd.arg("-i")
+            .arg(url)
+            .arg("-vf")
+            .arg(format!("scale={}:{}", resolution.width(), resolution.height()))
+            .arg("-c:v")
+            .arg(&config.video_codec)
+            .arg("-crf")
+            .arg(config.quality.to_string())
+            .arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("128k")
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg(&output_file);
+
+        log::debug!("Running FFmpeg command: {:?}", cmd);
+
+        let output = cmd.output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("FFmpeg failed for {}: {}", resolution.as_str(), stderr).into());
+        }
+
+        log::info!("Completed {} resolution", resolution.as_str());
+        video_files.push(output_file);
+    }
+
+    log::info!("FFmpeg MP4 processing completed");
+
+    Ok(ProcessedVideo {
+        output_format: OutputFormat::Mp4,
+        master_playlist: None,
+        stream_playlists: Vec::new(),
+        segments: Vec::new(),
+        video_files,
         metadata,
     })
 }
@@ -343,7 +342,7 @@ pub async fn calculate_sha256(file_path: &Path) -> Result<String, Box<dyn std::e
     Ok(format!("{:x}", hash))
 }
 
-/// Rename files to content-addressable names and update playlists
+/// Rename files to content-addressable names and update playlists (for HLS)
 pub async fn make_content_addressable(
     processed: &ProcessedVideo,
 ) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
@@ -351,6 +350,19 @@ pub async fn make_content_addressable(
 
     let mut hash_map: HashMap<String, String> = HashMap::new();
 
+    match processed.output_format {
+        OutputFormat::Hls => make_hls_content_addressable(processed, &mut hash_map).await?,
+        OutputFormat::Mp4 => make_mp4_content_addressable(processed, &mut hash_map).await?,
+    }
+
+    log::info!("Content-addressable naming completed");
+    Ok(hash_map)
+}
+
+async fn make_hls_content_addressable(
+    processed: &ProcessedVideo,
+    hash_map: &mut HashMap<String, String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Hash all segments and rename them
     for segment_path in &processed.segments {
         let hash = calculate_sha256(segment_path).await?;
@@ -369,7 +381,7 @@ pub async fn make_content_addressable(
     let mut stream_hash_map: HashMap<String, String> = HashMap::new();
 
     for playlist_path in &processed.stream_playlists {
-        update_playlist(playlist_path, &hash_map).await?;
+        update_playlist(playlist_path, hash_map).await?;
 
         let hash = calculate_sha256(playlist_path).await?;
         let new_name = format!("{}.m3u8", hash);
@@ -383,14 +395,35 @@ pub async fn make_content_addressable(
     }
 
     // Step 3: Update master playlist
-    update_playlist(&processed.master_playlist, &stream_hash_map).await?;
+    if let Some(master_playlist) = &processed.master_playlist {
+        update_playlist(master_playlist, &stream_hash_map).await?;
 
-    // Calculate master playlist hash (but don't rename it - keep it as master.m3u8)
-    let master_hash = calculate_sha256(&processed.master_playlist).await?;
-    hash_map.insert("master.m3u8".to_string(), master_hash);
+        // Calculate master playlist hash (but don't rename it - keep it as master.m3u8)
+        let master_hash = calculate_sha256(master_playlist).await?;
+        hash_map.insert("master.m3u8".to_string(), master_hash);
+    }
 
-    log::info!("Content-addressable naming completed");
-    Ok(hash_map)
+    Ok(())
+}
+
+async fn make_mp4_content_addressable(
+    processed: &ProcessedVideo,
+    hash_map: &mut HashMap<String, String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // For MP4 files, we just hash them and rename
+    for video_path in &processed.video_files {
+        let hash = calculate_sha256(video_path).await?;
+        let new_name = format!("{}.mp4", hash);
+        let new_path = video_path.with_file_name(&new_name);
+
+        let old_name = video_path.file_name().unwrap().to_string_lossy().to_string();
+        hash_map.insert(old_name, hash.clone());
+
+        fs::rename(video_path, &new_path).await?;
+        log::debug!("Renamed video: {} -> {}", video_path.display(), new_path.display());
+    }
+
+    Ok(())
 }
 
 /// Update playlist file with new filenames

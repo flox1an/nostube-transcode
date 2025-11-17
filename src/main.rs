@@ -3,9 +3,14 @@ mod env;
 mod helpers;
 
 use crate::helpers::blossom::BlossomClient;
-use crate::helpers::dvm::{get_input_url, get_relay_hints};
+use crate::helpers::dvm::{
+    get_input_url, get_output_format_from_params, get_relay_hints, get_resolutions_from_params,
+    OutputFormat,
+};
 use crate::helpers::ffmpeg::{make_content_addressable, process_video, TransformConfig};
-use crate::r#const::{DVM_STATUS_KIND, DVM_VIDEO_TRANSFORM_REQUEST_KIND, DVM_VIDEO_TRANSFORM_RESULT_KIND};
+use crate::r#const::{
+    DVM_STATUS_KIND, DVM_VIDEO_TRANSFORM_REQUEST_KIND, DVM_VIDEO_TRANSFORM_RESULT_KIND,
+};
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -67,7 +72,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .since(Timestamp::now());
 
     client.subscribe(vec![filter], None).await?;
-    log::info!("Subscribed to DVM video transform requests (kind {})", DVM_VIDEO_TRANSFORM_REQUEST_KIND);
+    log::info!(
+        "Subscribed to DVM video transform requests (kind {})",
+        DVM_VIDEO_TRANSFORM_REQUEST_KIND
+    );
 
     // Start cleanup task
     let cleanup_state = state.clone();
@@ -96,7 +104,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn handle_request(state: Arc<AppState>, event: Event) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_request(
+    state: Arc<AppState>,
+    event: Event,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Check if we've seen this event before
     {
         let mut seen = state.seen_events.lock().await;
@@ -139,7 +150,11 @@ async fn handle_request(state: Arc<AppState>, event: Event) -> Result<(), Box<dy
             log::info!("Publishing result for event {}", event.id);
 
             for relay_url in &result_relays {
-                match state.client.send_event_to(vec![relay_url], result_event.clone()).await {
+                match state
+                    .client
+                    .send_event_to(vec![relay_url], result_event.clone())
+                    .await
+                {
                     Ok(event_id) => log::info!("Published result to {}: {}", relay_url, event_id),
                     Err(e) => log::error!("Failed to publish to {}: {}", relay_url, e),
                 }
@@ -167,14 +182,30 @@ async fn process_job(
 
     log::info!("Processing in directory: {}", output_dir.display());
 
-    // Process video with default config
-    let config = TransformConfig::default();
+    // Parse output format and resolutions from request
+    let output_format = get_output_format_from_params(request_event);
+    let resolutions = get_resolutions_from_params(request_event);
+
+    log::info!(
+        "Output format: {:?}, Resolutions: {:?}",
+        output_format,
+        resolutions
+    );
+
+    // Build config with requested parameters
+    let config = TransformConfig {
+        output_format: output_format.clone(),
+        resolutions,
+        ..TransformConfig::default()
+    };
+
+    // Process video
     let processed = process_video(input_url, output_dir, &config).await?;
 
     // Make files content-addressable
     let hash_map = make_content_addressable(&processed).await?;
 
-    // Upload all files to Blossom
+    // Build result tags
     let mut result_tags = Vec::new();
 
     // Add request reference tags
@@ -189,7 +220,10 @@ async fn process_job(
     // Add metadata tags
     result_tags.push(Tag::custom(
         TagKind::Custom("dim".into()),
-        vec![format!("{}x{}", processed.metadata.width, processed.metadata.height)],
+        vec![format!(
+            "{}x{}",
+            processed.metadata.width, processed.metadata.height
+        )],
     ));
     result_tags.push(Tag::custom(
         TagKind::Custom("duration".into()),
@@ -200,25 +234,61 @@ async fn process_job(
         vec![processed.metadata.size.to_string()],
     ));
 
-    // Upload master playlist
-    log::info!("Uploading master playlist");
-    let master_blob = state
-        .blossom_client
-        .upload_file(
-            &state.config.blossom_upload_servers[0],
-            &processed.master_playlist,
-            &hash_map["master.m3u8"],
-        )
-        .await?;
+    // Add output format tag
+    result_tags.push(Tag::custom(
+        TagKind::Custom("output".into()),
+        vec![output_format.as_str().to_string()],
+    ));
 
-    result_tags.push(Tag::custom(
-        TagKind::Custom("master".into()),
-        vec![master_blob.url.clone()],
-    ));
-    result_tags.push(Tag::custom(
-        TagKind::Custom("x".into()),
-        vec![master_blob.sha256.clone()],
-    ));
+    // Upload files based on format
+    match output_format {
+        OutputFormat::Hls => {
+            upload_hls_files(state, &processed, &hash_map, output_dir, &mut result_tags).await?
+        }
+        OutputFormat::Mp4 => {
+            upload_mp4_files(state, &processed, &hash_map, output_dir, &mut result_tags).await?
+        }
+    }
+
+    // Build result event
+    let result_event = EventBuilder::new(
+        Kind::from(DVM_VIDEO_TRANSFORM_RESULT_KIND),
+        "",
+        result_tags,
+    )
+    .to_event(&state.client.keys().await?)?;
+
+    Ok(result_event)
+}
+
+async fn upload_hls_files(
+    state: &AppState,
+    processed: &helpers::ffmpeg::ProcessedVideo,
+    hash_map: &std::collections::HashMap<String, String>,
+    output_dir: &std::path::Path,
+    result_tags: &mut Vec<Tag>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Upload master playlist
+    if let Some(master_playlist) = &processed.master_playlist {
+        log::info!("Uploading master playlist");
+        let master_blob = state
+            .blossom_client
+            .upload_file(
+                &state.config.blossom_upload_servers[0],
+                master_playlist,
+                &hash_map["master.m3u8"],
+            )
+            .await?;
+
+        result_tags.push(Tag::custom(
+            TagKind::Custom("master".into()),
+            vec![master_blob.url.clone()],
+        ));
+        result_tags.push(Tag::custom(
+            TagKind::Custom("x".into()),
+            vec![master_blob.sha256.clone()],
+        ));
+    }
 
     // Upload stream playlists
     let mut stream_files = Vec::new();
@@ -238,11 +308,7 @@ async fn process_job(
 
         let blob = state
             .blossom_client
-            .upload_file(
-                &state.config.blossom_upload_servers[0],
-                &stream_path,
-                &hash,
-            )
+            .upload_file(&state.config.blossom_upload_servers[0], &stream_path, &hash)
             .await?;
 
         result_tags.push(Tag::custom(
@@ -292,15 +358,70 @@ async fn process_job(
         ));
     }
 
-    // Build result event
-    let result_event = EventBuilder::new(
-        Kind::from(DVM_VIDEO_TRANSFORM_RESULT_KIND),
-        "",
-        result_tags,
-    )
-    .to_event(&state.client.keys().await?)?;
+    Ok(())
+}
 
-    Ok(result_event)
+async fn upload_mp4_files(
+    state: &AppState,
+    processed: &helpers::ffmpeg::ProcessedVideo,
+    hash_map: &std::collections::HashMap<String, String>,
+    output_dir: &std::path::Path,
+    result_tags: &mut Vec<Tag>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Collect all MP4 files
+    let mut video_files = Vec::new();
+    let mut entries = tokio::fs::read_dir(output_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() && path.extension().map(|e| e == "mp4").unwrap_or(false) {
+            video_files.push(path);
+        }
+    }
+
+    // Upload each MP4 file
+    for video_path in video_files {
+        let file_name = video_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        // Get the hash from the hash_map
+        let hash = if let Some(h) = hash_map.get(&file_name) {
+            h.clone()
+        } else {
+            helpers::ffmpeg::calculate_sha256(&video_path).await?
+        };
+
+        log::info!("Uploading MP4: {}", video_path.display());
+
+        let blob = state
+            .blossom_client
+            .upload_file(&state.config.blossom_upload_servers[0], &video_path, &hash)
+            .await?;
+
+        // Extract resolution from filename (e.g., "video_720p.mp4")
+        let resolution_tag = if file_name.contains("480p") {
+            "480p"
+        } else if file_name.contains("720p") {
+            "720p"
+        } else if file_name.contains("1080p") {
+            "1080p"
+        } else {
+            "unknown"
+        };
+
+        result_tags.push(Tag::custom(
+            TagKind::Custom("video".into()),
+            vec![blob.url.clone(), resolution_tag.to_string()],
+        ));
+        result_tags.push(Tag::custom(
+            TagKind::Custom("x".into()),
+            vec![blob.sha256.clone()],
+        ));
+    }
+
+    Ok(())
 }
 
 async fn publish_status(
@@ -310,7 +431,10 @@ async fn publish_status(
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tags = vec![
-        Tag::custom(TagKind::Custom("status".into()), vec![status.to_string()]),
+        Tag::custom(
+            TagKind::Custom("status".into()),
+            vec![status.to_string()],
+        ),
         Tag::event(request_event.id),
         Tag::public_key(request_event.pubkey),
         Tag::custom(
@@ -338,7 +462,10 @@ async fn publish_error(
     error: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tags = vec![
-        Tag::custom(TagKind::Custom("status".into()), vec!["error".to_string()]),
+        Tag::custom(
+            TagKind::Custom("status".into()),
+            vec!["error".to_string()],
+        ),
         Tag::event(request_event.id),
         Tag::public_key(request_event.pubkey),
     ];

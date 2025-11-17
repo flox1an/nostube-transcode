@@ -1,11 +1,15 @@
 # nostube-transcode
 
-A Nostr-based Decentralized Virtual Machine (DVM) for video transcoding. This DVM accepts video URLs via Nostr events, processes them into HLS (HTTP Live Streaming) format with multiple resolutions, and uploads the results to Blossom servers.
+A Nostr-based Decentralized Virtual Machine (DVM) for video transcoding. This DVM accepts video URLs via Nostr events, processes them into either HLS (HTTP Live Streaming) or MP4 format with configurable resolutions, and uploads the results to Blossom servers.
 
 ## Features
 
 - **Nostr Integration**: Listens for DVM video transform requests (kind 5207) on multiple Nostr relays
-- **HLS Transcoding**: Converts videos to HLS format with multiple resolutions (360p, 720p, 1080p)
+- **Multiple Output Formats**:
+  - **HLS**: Adaptive bitrate streaming with master playlist and segments
+  - **MP4**: Single-file video output with fast start
+- **Configurable Resolutions**: Support for 480p, 720p, and 1080p (multiple selections allowed)
+- **H.265 Encoding**: Efficient video compression using libx265 codec
 - **Content-Addressable Storage**: Uses SHA-256 hashes for file naming
 - **Blossom Upload**: Automatically uploads processed files to Blossom servers
 - **Status Updates**: Publishes processing status updates (kind 7000) during job execution
@@ -94,36 +98,85 @@ The DVM will:
 
 ### Video Processing
 
-The DVM processes videos with the following default settings:
+The DVM supports two output formats:
 
-- **360p**: 640x360, H.265 (quality 50), AAC audio (96k)
-- **720p**: 1280x720, H.265 (quality 65), original audio
-- **1080p**: Original resolution, no transcoding (copy)
-
-HLS settings:
+#### HLS (HTTP Live Streaming)
+Generates adaptive bitrate streaming with multiple resolutions:
 - Segment duration: 6 seconds
 - Segment type: fMP4
 - Playlist size: unlimited (keeps all segments)
+- Codec: H.265 (libx265), AAC audio at 128k
+
+#### MP4 (Single File)
+Generates standalone MP4 files for each requested resolution:
+- Codec: H.265 (libx265) with CRF 28
+- Audio: AAC at 128k
+- Fast start enabled (moov atom at beginning)
+
+#### Supported Resolutions
+- **480p**: 854x480
+- **720p**: 1280x720
+- **1080p**: 1920x1080
+
+#### Default Behavior
+If no parameters are specified:
+- Output format: HLS
+- Resolutions: 480p, 720p, 1080p (all three)
 
 ## Event Protocol
 
 ### Request Event (Kind 5207)
 
+**Basic HLS Request (default - all resolutions):**
 ```json
 {
   "kind": 5207,
   "created_at": <unix_timestamp>,
   "tags": [
     ["i", "<video_url>", "url"],
-    ["relays", "wss://relay1.com", "wss://relay2.com"],
-    ["output", "hls"]
+    ["relays", "wss://relay1.com", "wss://relay2.com"]
   ],
   "content": ""
 }
 ```
 
+**MP4 Request with specific resolutions:**
+```json
+{
+  "kind": 5207,
+  "created_at": <unix_timestamp>,
+  "tags": [
+    ["i", "<video_url>", "url"],
+    ["param", "output", "mp4"],
+    ["param", "resolution", "720p"],
+    ["param", "resolution", "1080p"]
+  ],
+  "content": ""
+}
+```
+
+**HLS Request with single resolution:**
+```json
+{
+  "kind": 5207,
+  "created_at": <unix_timestamp>,
+  "tags": [
+    ["i", "<video_url>", "url"],
+    ["param", "output", "hls"],
+    ["param", "resolution", "720p"]
+  ],
+  "content": ""
+}
+```
+
+**Request Parameters:**
+- `["param", "output", "hls|mp4"]` - Output format (default: hls)
+- `["param", "resolution", "480p|720p|1080p"]` - Resolution (can specify multiple times)
+- `["relays", "wss://relay1", ...]` - Relays for publishing results
+
 ### Result Event (Kind 6207)
 
+**HLS Result:**
 ```json
 {
   "kind": 6207,
@@ -132,12 +185,14 @@ HLS settings:
     ["e", "<request_event_id>"],
     ["p", "<requester_pubkey>"],
     ["i", "<original_input_url>", "url"],
+    ["output", "hls"],
     ["master", "<master_playlist_url>"],
     ["x", "<master_playlist_sha256>"],
     ["stream", "<stream_playlist_url>"],
     ["x", "<stream_playlist_sha256>"],
     ["segment", "<segment_url>"],
     ["x", "<segment_sha256>"],
+    ... (more segments)
     ["dim", "1920x1080"],
     ["duration", "120"],
     ["size", "50000000"]
@@ -145,6 +200,44 @@ HLS settings:
   "content": ""
 }
 ```
+
+**MP4 Result:**
+```json
+{
+  "kind": 6207,
+  "created_at": <unix_timestamp>,
+  "tags": [
+    ["e", "<request_event_id>"],
+    ["p", "<requester_pubkey>"],
+    ["i", "<original_input_url>", "url"],
+    ["output", "mp4"],
+    ["video", "<720p_video_url>", "720p"],
+    ["x", "<720p_sha256>"],
+    ["video", "<1080p_video_url>", "1080p"],
+    ["x", "<1080p_sha256>"],
+    ["dim", "1920x1080"],
+    ["duration", "120"],
+    ["size", "50000000"]
+  ],
+  "content": ""
+}
+```
+
+**Result Tags:**
+- `e`: Reference to request event ID
+- `p`: Requester's public key
+- `i`: Original input tag from request
+- `output`: Output format used (hls or mp4)
+- For HLS:
+  - `master`: URL to master HLS playlist (master.m3u8)
+  - `stream`: URL to stream-specific playlist (one per resolution)
+  - `segment`: URL to video segment (multiple, one per segment)
+- For MP4:
+  - `video`: URL to MP4 file, with resolution as second value (e.g., "720p")
+- `x`: SHA-256 hash for each file (paired with master/stream/segment/video tags)
+- `dim`: Original video dimensions
+- `duration`: Video duration in seconds
+- `size`: Original file size in bytes
 
 ### Status Event (Kind 7000)
 
