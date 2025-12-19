@@ -141,6 +141,11 @@ impl FfmpegCommand {
             cmd.arg("-init_hw_device").arg(&init_device);
         }
 
+        // Tell FFmpeg which device to use for filter operations (needed for hwupload)
+        if let Some(filter_device) = self.hwaccel.filter_hw_device() {
+            cmd.arg("-filter_hw_device").arg(filter_device);
+        }
+
         // Hardware accelerated decoding
         if let Some(hwaccel_type) = self.hwaccel.hwaccel_type() {
             cmd.arg("-hwaccel").arg(hwaccel_type);
@@ -437,6 +442,11 @@ impl FfmpegMp4Command {
         // Initialize hardware device
         if let Some(init_device) = self.hwaccel.init_hw_device() {
             cmd.arg("-init_hw_device").arg(&init_device);
+        }
+
+        // Tell FFmpeg which device to use for filter operations (needed for hwupload)
+        if let Some(filter_device) = self.hwaccel.filter_hw_device() {
+            cmd.arg("-filter_hw_device").arg(filter_device);
         }
 
         // Hardware accelerated decoding

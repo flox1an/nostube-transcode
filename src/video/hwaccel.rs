@@ -201,6 +201,16 @@ impl HwAccel {
         }
     }
 
+    /// Get filter_hw_device option name (used with hwupload in filter graphs)
+    /// This tells FFmpeg which initialized device to use for filter operations
+    pub fn filter_hw_device(&self) -> Option<&'static str> {
+        match self {
+            Self::Nvenc => Some("cuda"),
+            Self::Qsv => Some("qsv"),
+            _ => None,
+        }
+    }
+
     /// Get hardware upload filter for transitioning from software to hardware frames
     /// For QSV, we need format=nv12 before hwupload because QSV expects nv12 pixel format
     pub fn upload_filter(&self) -> Option<&'static str> {
