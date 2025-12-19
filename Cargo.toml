@@ -1,0 +1,62 @@
+[package]
+name = "dvm-video-processing"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full", "signal"] }
+
+# Nostr
+nostr-sdk = "0.35"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Crypto
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+
+# Environment & config
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async utilities
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+
+# URL parsing
+url = "2.5"
+
+# Regex for playlist parsing
+regex = "1.10"
+
+# UUID for temp directories
+uuid = { version = "1.10", features = ["v4"] }
+
+# Web server
+axum = "0.7"
+rust-embed = "8.5"
+mime_guess = "2.0"
+tower-http = { version = "0.5", features = ["fs"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3.12"
+tokio-test = "0.4"

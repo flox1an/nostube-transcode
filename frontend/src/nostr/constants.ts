@@ -1,0 +1,11 @@
+// Default relays for DVM discovery and requests
+export const RELAYS = ["wss://haven.slidestr.net"];
+
+// Nostr event kinds for DVM protocol
+export const KIND_DVM_ANNOUNCEMENT = 31990;
+export const KIND_DVM_REQUEST = 5207;
+export const KIND_DVM_STATUS = 7000;
+export const KIND_DVM_RESULT = 6207;
+
+// DVM service identifier for video transformation
+export const DVM_SERVICE_ID = "video-transform-hls";
