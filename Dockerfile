@@ -86,9 +86,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user with video/render group access
-RUN useradd -m -u 1000 dvm && \
-    usermod -aG video,render dvm
+# Create non-root user with video/render group access for GPU
+RUN groupadd -f video && \
+    groupadd -f render && \
+    useradd -m -u 1000 -G video,render dvm
 
 WORKDIR /app
 
