@@ -57,9 +57,8 @@ RUN cargo build --release
 FROM debian:bookworm-slim
 
 # Enable non-free-firmware for Intel media drivers
-RUN sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
-    echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/nonfree.list && \
-    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/nonfree.list
+# Modify the DEB822 format sources file to include non-free components
+RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
 
 # Install Intel Media drivers (VA-API), and FFmpeg with QSV support
 RUN apt-get update && apt-get install -y --no-install-recommends \
