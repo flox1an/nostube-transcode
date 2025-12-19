@@ -160,6 +160,10 @@ impl FfmpegCommand {
                 cmd.arg("-hwaccel_output_format").arg(output_format);
             }
         }
+
+        // Enable multi-threaded decoding for software decoders (e.g., libdav1d for AV1)
+        // This significantly improves decode performance for CPU-decoded formats
+        cmd.arg("-threads").arg("0");
     }
 
     fn build_complex_filter(&self) -> String {
@@ -463,6 +467,10 @@ impl FfmpegMp4Command {
                 cmd.arg("-hwaccel_output_format").arg(output_format);
             }
         }
+
+        // Enable multi-threaded decoding for software decoders (e.g., libdav1d for AV1)
+        // This significantly improves decode performance for CPU-decoded formats
+        cmd.arg("-threads").arg("0");
     }
 }
 
