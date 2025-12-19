@@ -378,16 +378,15 @@ impl HwAccel {
         match self {
             Self::Nvenc => Some("hwupload_cuda"),
             // VAAPI: Convert to nv12 (required by VAAPI encoders) and upload to VAAPI memory.
-            // Use scale filter instead of format filter because scale can handle
-            // 10-bit to 8-bit conversion (e.g., AV1 decoded by libdav1d outputs yuv420p10le).
+            // The format filter handles pixel format conversion including 10-bit to 8-bit
+            // (e.g., AV1 decoded by libdav1d outputs yuv420p10le, converted to nv12).
             // extra_hw_frames=64 provides buffer for frame reordering during encoding.
-            Self::Vaapi => Some("scale=format=nv12,hwupload=extra_hw_frames=64"),
+            Self::Vaapi => Some("format=nv12,hwupload=extra_hw_frames=64"),
             // QSV: Convert to nv12 (required by QSV) and upload to QSV memory.
-            // Use scale filter instead of format filter because scale can handle
-            // 10-bit to 8-bit conversion (e.g., AV1 decoded by libdav1d outputs yuv420p10le).
-            // The format filter alone cannot convert between different bit depths.
+            // The format filter handles pixel format conversion including 10-bit to 8-bit
+            // (e.g., AV1 decoded by libdav1d outputs yuv420p10le, converted to nv12).
             // extra_hw_frames=64 provides buffer for frame reordering during encoding.
-            Self::Qsv => Some("scale=format=nv12,hwupload=extra_hw_frames=64"),
+            Self::Qsv => Some("format=nv12,hwupload=extra_hw_frames=64"),
             _ => None,
         }
     }
