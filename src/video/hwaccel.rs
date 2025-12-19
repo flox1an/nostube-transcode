@@ -137,9 +137,13 @@ impl HwAccel {
     pub fn hwaccel_output_format(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("cuda"),
-            // QSV: Keep frames in QSV memory. Requires LIBVA_DRIVER_NAME=iHD to be set
-            // for Intel Media Driver to properly decode formats like AV1.
-            Self::Qsv => Some("qsv"),
+            // QSV: Don't use hwaccel_output_format because QSV can't decode all codecs
+            // (e.g., AV1 on many platforms). When HW decode fails, FFmpeg falls back to
+            // software decoding which outputs software frames. If hwaccel_output_format=qsv
+            // is set, FFmpeg incorrectly assumes frames are in QSV memory, causing
+            // "Impossible to convert between formats" errors with QSV filters.
+            // Instead, we use upload_filter() to explicitly upload frames to QSV memory.
+            Self::Qsv => None,
             _ => None,
         }
     }
@@ -210,12 +214,14 @@ impl HwAccel {
     }
 
     /// Get hardware upload filter for transitioning from software to hardware frames
-    /// Note: QSV doesn't need this when using hwaccel_output_format=qsv (frames already in GPU memory)
     pub fn upload_filter(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("hwupload_cuda"),
-            // QSV: No upload needed - hwaccel_output_format=qsv keeps frames in GPU memory
-            Self::Qsv => None,
+            // QSV: Convert to nv12 (required by QSV) and upload to QSV memory.
+            // extra_hw_frames=64 provides buffer for frame reordering during encoding.
+            // This handles both software-decoded frames and hardware-decoded frames
+            // that need to be re-uploaded after any software processing.
+            Self::Qsv => Some("format=nv12,hwupload=extra_hw_frames=64"),
             _ => None,
         }
     }
