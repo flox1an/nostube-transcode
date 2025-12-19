@@ -10,7 +10,9 @@ use tracing::info;
 pub enum HwAccel {
     /// NVIDIA NVENC (Linux/Windows)
     Nvenc,
-    /// Intel Quick Sync Video (Linux)
+    /// Intel/AMD VAAPI (Linux) - works on all Intel generations
+    Vaapi,
+    /// Intel Quick Sync Video (Linux) - legacy, requires libmfx
     Qsv,
     /// Apple VideoToolbox (macOS)
     VideoToolbox,
@@ -30,12 +32,17 @@ impl HwAccel {
             return Self::VideoToolbox;
         }
 
-        // Linux: check for NVIDIA first (usually faster), then Intel QSV
+        // Linux: check for NVIDIA first (usually faster), then VAAPI (works on all Intel), then QSV
         #[cfg(target_os = "linux")]
         {
             if Self::is_nvidia_available() {
                 info!("Detected NVIDIA GPU, using NVENC hardware acceleration");
                 return Self::Nvenc;
+            }
+
+            if Self::is_vaapi_available() {
+                info!("Detected VAAPI hardware acceleration");
+                return Self::Vaapi;
             }
 
             if Self::is_qsv_available() {
@@ -65,6 +72,69 @@ impl HwAccel {
         }
 
         false
+    }
+
+    /// Check if VAAPI is available (Linux)
+    /// This runs a quick FFmpeg probe to verify VAAPI HEVC encoding actually works.
+    #[cfg(target_os = "linux")]
+    fn is_vaapi_available() -> bool {
+        // First check for render device
+        let render_devices = ["/dev/dri/renderD128", "/dev/dri/renderD129"];
+
+        let device = render_devices.iter().find(|d| Path::new(*d).exists());
+
+        let Some(device) = device else {
+            debug!("No render device found, VAAPI unavailable");
+            return false;
+        };
+
+        debug!(device = %device, "Found render device, testing VAAPI initialization");
+
+        // Run a quick FFmpeg test to verify VAAPI HEVC encoding works
+        let result = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-init_hw_device",
+                &format!("vaapi=vaapi:{}", device),
+                "-filter_hw_device",
+                "vaapi",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=0.1",
+                "-vf",
+                "format=nv12,hwupload",
+                "-c:v",
+                "hevc_vaapi",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                info!(device = %device, "VAAPI hardware acceleration verified");
+                true
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    device = %device,
+                    stderr = %stderr,
+                    "VAAPI probe failed"
+                );
+                false
+            }
+            Err(e) => {
+                debug!(error = %e, "Failed to run FFmpeg VAAPI probe");
+                false
+            }
+        }
     }
 
     /// Check if Intel QSV is available (Linux)
@@ -153,10 +223,27 @@ impl HwAccel {
         }
     }
 
+    /// Get the VAAPI device path (if available)
+    pub fn vaapi_device(&self) -> Option<&'static str> {
+        match self {
+            Self::Vaapi => {
+                // Return the first available device
+                for device in &["/dev/dri/renderD128", "/dev/dri/renderD129"] {
+                    if Path::new(device).exists() {
+                        return Some(device);
+                    }
+                }
+                Some("/dev/dri/renderD128") // fallback
+            }
+            _ => None,
+        }
+    }
+
     /// Get the video encoder name for this acceleration
     pub fn video_encoder(&self) -> &'static str {
         match self {
             Self::Nvenc => "hevc_nvenc",
+            Self::Vaapi => "hevc_vaapi",
             Self::Qsv => "hevc_qsv",
             Self::VideoToolbox => "hevc_videotoolbox",
             Self::Software => "libx265",
@@ -167,6 +254,7 @@ impl HwAccel {
     pub fn scale_filter(&self) -> &'static str {
         match self {
             Self::Nvenc => "scale_cuda",
+            Self::Vaapi => "scale_vaapi",
             Self::Qsv => "scale_qsv",
             Self::VideoToolbox => "scale",
             Self::Software => "scale",
@@ -175,13 +263,14 @@ impl HwAccel {
 
     /// Whether this uses hardware-accelerated decoding
     pub fn uses_hw_decode(&self) -> bool {
-        matches!(self, Self::Nvenc | Self::Qsv)
+        matches!(self, Self::Nvenc | Self::Vaapi | Self::Qsv)
     }
 
     /// Get hwaccel type for FFmpeg -hwaccel option
     pub fn hwaccel_type(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("cuda"),
+            Self::Vaapi => Some("vaapi"),
             Self::Qsv => Some("qsv"),
             _ => None,
         }
@@ -192,6 +281,10 @@ impl HwAccel {
     pub fn hwaccel_output_format(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("cuda"),
+            // VAAPI: Don't use hwaccel_output_format because VAAPI can't decode all codecs
+            // (e.g., AV1 may not be supported). When HW decode fails, FFmpeg falls back to
+            // software decoding. Instead, we use upload_filter() to explicitly upload frames.
+            Self::Vaapi => None,
             // QSV: Don't use hwaccel_output_format because QSV can't decode all codecs
             // (e.g., AV1 on many platforms). When HW decode fails, FFmpeg falls back to
             // software decoding which outputs software frames. If hwaccel_output_format=qsv
@@ -210,6 +303,10 @@ impl HwAccel {
             Self::Nvenc => {
                 // NVENC uses -cq for constant quality (similar to CRF)
                 ("-cq", crf.to_string())
+            }
+            Self::Vaapi => {
+                // VAAPI uses -qp for constant QP mode (similar scale to CRF, lower = better)
+                ("-qp", crf.to_string())
             }
             Self::Qsv => {
                 // QSV uses global_quality (similar scale to CRF, lower = better)
@@ -235,6 +332,10 @@ impl HwAccel {
                 ("-tune", "hq"),
                 ("-rc", "vbr"),
             ],
+            Self::Vaapi => vec![
+                // VAAPI doesn't have many options, but we set profile for compatibility
+                ("-profile:v", "main"),
+            ],
             Self::Qsv => vec![
                 ("-preset", "medium"),
             ],
@@ -249,6 +350,10 @@ impl HwAccel {
     pub fn init_hw_device(&self) -> Option<String> {
         match self {
             Self::Nvenc => Some("cuda=cuda:0".to_string()),
+            Self::Vaapi => {
+                let device = self.vaapi_device().unwrap_or("/dev/dri/renderD128");
+                Some(format!("vaapi=vaapi:{}", device))
+            }
             Self::Qsv => {
                 let device = self.qsv_device().unwrap_or("/dev/dri/renderD128");
                 Some(format!("qsv=qsv:hw_any,child_device={}", device))
@@ -262,6 +367,7 @@ impl HwAccel {
     pub fn filter_hw_device(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("cuda"),
+            Self::Vaapi => Some("vaapi"),
             Self::Qsv => Some("qsv"),
             _ => None,
         }
@@ -271,6 +377,11 @@ impl HwAccel {
     pub fn upload_filter(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("hwupload_cuda"),
+            // VAAPI: Convert to nv12 (required by VAAPI encoders) and upload to VAAPI memory.
+            // Use scale filter instead of format filter because scale can handle
+            // 10-bit to 8-bit conversion (e.g., AV1 decoded by libdav1d outputs yuv420p10le).
+            // extra_hw_frames=64 provides buffer for frame reordering during encoding.
+            Self::Vaapi => Some("scale=format=nv12,hwupload=extra_hw_frames=64"),
             // QSV: Convert to nv12 (required by QSV) and upload to QSV memory.
             // Use scale filter instead of format filter because scale can handle
             // 10-bit to 8-bit conversion (e.g., AV1 decoded by libdav1d outputs yuv420p10le).
@@ -286,6 +397,7 @@ impl std::fmt::Display for HwAccel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Nvenc => write!(f, "NVIDIA NVENC"),
+            Self::Vaapi => write!(f, "VAAPI (hevc_vaapi)"),
             Self::Qsv => write!(f, "Intel QSV"),
             Self::VideoToolbox => write!(f, "Apple VideoToolbox"),
             Self::Software => write!(f, "Software (libx265)"),
@@ -300,6 +412,7 @@ mod tests {
     #[test]
     fn test_video_encoder() {
         assert_eq!(HwAccel::Nvenc.video_encoder(), "hevc_nvenc");
+        assert_eq!(HwAccel::Vaapi.video_encoder(), "hevc_vaapi");
         assert_eq!(HwAccel::Qsv.video_encoder(), "hevc_qsv");
         assert_eq!(HwAccel::VideoToolbox.video_encoder(), "hevc_videotoolbox");
         assert_eq!(HwAccel::Software.video_encoder(), "libx265");
@@ -308,6 +421,7 @@ mod tests {
     #[test]
     fn test_scale_filter() {
         assert_eq!(HwAccel::Nvenc.scale_filter(), "scale_cuda");
+        assert_eq!(HwAccel::Vaapi.scale_filter(), "scale_vaapi");
         assert_eq!(HwAccel::Qsv.scale_filter(), "scale_qsv");
         assert_eq!(HwAccel::Software.scale_filter(), "scale");
     }
@@ -316,6 +430,9 @@ mod tests {
     fn test_quality_param() {
         let (name, _) = HwAccel::Nvenc.quality_param(23);
         assert_eq!(name, "-cq");
+
+        let (name, _) = HwAccel::Vaapi.quality_param(23);
+        assert_eq!(name, "-qp");
 
         let (name, _) = HwAccel::Qsv.quality_param(23);
         assert_eq!(name, "-global_quality");
@@ -327,6 +444,7 @@ mod tests {
     #[test]
     fn test_hwaccel_type() {
         assert_eq!(HwAccel::Nvenc.hwaccel_type(), Some("cuda"));
+        assert_eq!(HwAccel::Vaapi.hwaccel_type(), Some("vaapi"));
         assert_eq!(HwAccel::Qsv.hwaccel_type(), Some("qsv"));
         assert_eq!(HwAccel::VideoToolbox.hwaccel_type(), None);
         assert_eq!(HwAccel::Software.hwaccel_type(), None);
