@@ -31,9 +31,11 @@ impl SubscriptionManager {
         info!("Connecting to relays...");
         self.client.connect().await;
 
-        // Subscribe to DVM requests
+        // Subscribe to DVM requests addressed to this DVM
+        let dvm_pubkey = self.config.nostr_keys.public_key();
         let filter = Filter::new()
             .kind(DVM_VIDEO_TRANSFORM_REQUEST_KIND)
+            .pubkey(dvm_pubkey)
             .since(Timestamp::now());
 
         self.client.subscribe(vec![filter], None).await?;
