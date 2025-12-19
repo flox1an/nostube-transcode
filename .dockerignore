@@ -1,0 +1,30 @@
+# Build artifacts
+target/
+temp/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment (don't include secrets in image)
+.env
+.env.*
+
+# Documentation (keep CLAUDE.md for reference)
+README.md
+LICENSE
+
+# Frontend build cache (rebuilt in Docker)
+frontend/node_modules/
+frontend/dist/
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,37 @@
+# Docker Compose for DVM Video Processing with Intel QSV
+# Tested on UGREEN NAS (N100, Pentium Gold 8505, i5-1235U)
+
+services:
+  dvm-video:
+    build: .
+    container_name: dvm-video-processing
+    restart: unless-stopped
+
+    # CRITICAL: Pass Intel GPU render device for QSV hardware acceleration
+    devices:
+      - /dev/dri:/dev/dri
+
+    # Match host video/render group IDs for GPU access
+    # Run `getent group video render` on host to find GIDs
+    group_add:
+      - "44"   # video group (default on Debian/Ubuntu)
+      - "109"  # render group (may vary - check your host)
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      # Persistent temp directory (optional, for debugging)
+      - ./temp:/app/temp
+
+    environment:
+      # Required
+      - NOSTR_PRIVATE_KEY=${NOSTR_PRIVATE_KEY}
+      - NOSTR_RELAYS=${NOSTR_RELAYS}
+      - BLOSSOM_UPLOAD_SERVERS=${BLOSSOM_UPLOAD_SERVERS}
+
+      # Optional
+      - BLOSSOM_BLOB_EXPIRATION_DAYS=${BLOSSOM_BLOB_EXPIRATION_DAYS:-30}
+      - HTTP_PORT=3000
+      - TEMP_DIR=/app/temp
+      - RUST_LOG=${RUST_LOG:-info}
