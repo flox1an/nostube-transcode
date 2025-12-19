@@ -182,7 +182,6 @@ impl HwAccel {
             ],
             Self::Qsv => vec![
                 ("-preset", "medium"),
-                ("-look_ahead", "1"),
             ],
             Self::VideoToolbox => vec![],
             Self::Software => vec![
@@ -218,10 +217,11 @@ impl HwAccel {
         match self {
             Self::Nvenc => Some("hwupload_cuda"),
             // QSV: Convert to nv12 (required by QSV) and upload to QSV memory.
+            // Use scale filter instead of format filter because scale can handle
+            // 10-bit to 8-bit conversion (e.g., AV1 decoded by libdav1d outputs yuv420p10le).
+            // The format filter alone cannot convert between different bit depths.
             // extra_hw_frames=64 provides buffer for frame reordering during encoding.
-            // This handles both software-decoded frames and hardware-decoded frames
-            // that need to be re-uploaded after any software processing.
-            Self::Qsv => Some("format=nv12,hwupload=extra_hw_frames=64"),
+            Self::Qsv => Some("scale=format=nv12,hwupload=extra_hw_frames=64"),
             _ => None,
         }
     }
