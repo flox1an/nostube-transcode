@@ -188,12 +188,8 @@ impl FfmpegCommand {
         let input_chain = if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
                 // Upload frames to hardware memory before splitting/scaling
-                // For QSV, also need format=qsv to set the proper pixel format
-                let format_filter = match self.hwaccel {
-                    HwAccel::Qsv => ",format=qsv",
-                    _ => "",
-                };
-                format!("[0:v]{}{},split={}{}", upload_filter, format_filter, non_original.len(), output_labels.join(""))
+                // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
+                format!("[0:v]{},split={}{}", upload_filter, non_original.len(), output_labels.join(""))
             } else {
                 format!("[0:v]split={}{}", non_original.len(), output_labels.join(""))
             }
@@ -373,13 +369,10 @@ impl FfmpegMp4Command {
 
         // For QSV, when hwaccel_output_format is not set (to handle software decode fallback),
         // we need to upload frames to QSV memory before applying QSV filters
+        // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
         let vf = if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
-                let format_filter = match self.hwaccel {
-                    HwAccel::Qsv => ",format=qsv",
-                    _ => "",
-                };
-                format!("{}{},{}=w={}:h={}", upload_filter, format_filter, scale_filter, width, height)
+                format!("{},{}=w={}:h={}", upload_filter, scale_filter, width, height)
             } else {
                 format!("{}=w={}:h={}", scale_filter, width, height)
             }

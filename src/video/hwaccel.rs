@@ -202,10 +202,11 @@ impl HwAccel {
     }
 
     /// Get hardware upload filter for transitioning from software to hardware frames
+    /// For QSV, we need format=nv12 before hwupload because QSV expects nv12 pixel format
     pub fn upload_filter(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("hwupload_cuda"),
-            Self::Qsv => Some("hwupload=extra_hw_frames=64"),
+            Self::Qsv => Some("format=nv12,hwupload=extra_hw_frames=64"),
             _ => None,
         }
     }
