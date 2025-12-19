@@ -1,4 +1,8 @@
 use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::process::Command;
+#[cfg(target_os = "linux")]
+use tracing::debug;
 use tracing::info;
 
 /// Hardware acceleration backend
@@ -64,22 +68,73 @@ impl HwAccel {
     }
 
     /// Check if Intel QSV is available (Linux)
+    /// This runs a quick FFmpeg probe to verify QSV actually works,
+    /// not just that the render device exists (which could be AMD or unsupported Intel).
     #[cfg(target_os = "linux")]
     fn is_qsv_available() -> bool {
-        // Check for render device
-        let render_devices = [
-            "/dev/dri/renderD128",
-            "/dev/dri/renderD129",
-        ];
+        // First check for render device
+        let render_devices = ["/dev/dri/renderD128", "/dev/dri/renderD129"];
 
-        for device in &render_devices {
-            if Path::new(device).exists() {
-                info!(device = %device, "Found QSV render device");
-                return true;
+        let device = render_devices
+            .iter()
+            .find(|d| Path::new(*d).exists());
+
+        let Some(device) = device else {
+            debug!("No render device found, QSV unavailable");
+            return false;
+        };
+
+        debug!(device = %device, "Found render device, testing QSV initialization");
+
+        // Run a quick FFmpeg test to verify QSV actually works
+        // This catches cases where the device exists but:
+        // - It's an AMD GPU (not Intel)
+        // - Intel GPU doesn't support QSV
+        // - MFX/oneVPL runtime is not installed
+        let result = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-init_hw_device",
+                &format!("qsv=qsv:hw_any,child_device={}", device),
+                "-filter_hw_device",
+                "qsv",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=0.1",
+                "-vf",
+                "format=nv12,hwupload=extra_hw_frames=64,scale_qsv=64:64",
+                "-c:v",
+                "hevc_qsv",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                info!(device = %device, "QSV hardware acceleration verified");
+                true
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    device = %device,
+                    stderr = %stderr,
+                    "QSV probe failed, falling back to software encoding"
+                );
+                false
+            }
+            Err(e) => {
+                debug!(error = %e, "Failed to run FFmpeg QSV probe");
+                false
             }
         }
-
-        false
     }
 
     /// Get the QSV device path (if available)
