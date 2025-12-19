@@ -14,16 +14,27 @@ pub const DVM_ANNOUNCEMENT_KIND: Kind = Kind::Custom(31990);
 /// DVM service identifier for video transformation
 pub const DVM_SERVICE_ID: &str = "video-transform-hls";
 
+/// Default DVM name if not configured
+const DEFAULT_DVM_NAME: &str = "Video Transform DVM";
+
 /// Builds a NIP-89 DVM announcement event
 pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuilder {
     let relays: Vec<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
 
-    // Build the about/description
-    let about = format!(
-        "Video transformation DVM - converts videos to HLS streaming format. \
-         Supports 360p, 720p, 1080p, and 4K. Hardware acceleration: {}.",
-        hwaccel
-    );
+    // Use configured name or default
+    let name = config
+        .dvm_name
+        .clone()
+        .unwrap_or_else(|| DEFAULT_DVM_NAME.to_string());
+
+    // Use configured about or build default
+    let about = config.dvm_about.clone().unwrap_or_else(|| {
+        format!(
+            "Video transformation DVM - converts videos to HLS streaming format. \
+             Supports 360p, 720p, 1080p, and 4K. Hardware acceleration: {}.",
+            hwaccel
+        )
+    });
 
     let mut tags = vec![
         // NIP-89 required tags
@@ -38,7 +49,7 @@ pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuild
         // Service metadata
         Tag::custom(
             TagKind::Custom("name".into()),
-            vec!["Video Transform DVM".to_string()],
+            vec![name],
         ),
         Tag::custom(
             TagKind::Custom("about".into()),

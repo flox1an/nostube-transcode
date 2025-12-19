@@ -15,7 +15,7 @@ services:
     # Run `getent group video render` on host to find GIDs
     group_add:
       - "44"   # video group (default on Debian/Ubuntu)
-      - "109"  # render group (may vary - check your host)
+      - "105"  # render group (from your host - check with: stat /dev/dri/renderD128)
 
     ports:
       - "3000:3000"

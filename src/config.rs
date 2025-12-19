@@ -14,6 +14,8 @@ pub struct Config {
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub http_port: u16,
+    pub dvm_name: Option<String>,
+    pub dvm_about: Option<String>,
 }
 
 impl Config {
@@ -62,6 +64,9 @@ impl Config {
             .parse()
             .map_err(|_| ConfigError::InvalidValue("HTTP_PORT"))?;
 
+        let dvm_name = std::env::var("DVM_NAME").ok();
+        let dvm_about = std::env::var("DVM_ABOUT").ok();
+
         Ok(Self {
             nostr_keys,
             nostr_relays,
@@ -71,6 +76,8 @@ impl Config {
             ffmpeg_path,
             ffprobe_path,
             http_port,
+            dvm_name,
+            dvm_about,
         })
     }
 }

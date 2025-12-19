@@ -56,34 +56,25 @@ RUN cargo build --release
 # =============================================================================
 FROM debian:bookworm-slim
 
-# Add Intel graphics packages repository for latest drivers
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
+# Enable non-free-firmware for Intel media drivers
+RUN sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
+    echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/nonfree.list && \
+    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/nonfree.list
 
-# Add Intel repository for OneVPL (required for 12th gen+ CPUs like N100, 8505)
-RUN curl -fsSL https://repositories.intel.com/gpu/intel-graphics.key | \
-    gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" | \
-    tee /etc/apt/sources.list.d/intel-gpu.list
-
-# Install Intel Media drivers (OneVPL), VAAPI, and FFmpeg with QSV support
+# Install Intel Media drivers (VA-API), and FFmpeg with QSV support
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Intel GPU compute/media packages (OneVPL runtime for 12th gen+)
+    # Intel GPU VA-API drivers (supports 5th gen through current)
     intel-media-va-driver-non-free \
-    libmfx1 \
-    libmfxgen1 \
-    libvpl2 \
+    # VA-API libraries
     libva-drm2 \
     libva2 \
     vainfo \
-    intel-gpu-tools \
-    # FFmpeg with QSV support
+    # FFmpeg with hardware acceleration support
     ffmpeg \
     # Runtime dependencies
     libssl3 \
+    ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user with video/render group access for GPU

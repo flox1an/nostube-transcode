@@ -133,10 +133,15 @@ impl HwAccel {
     }
 
     /// Get hwaccel output format for FFmpeg -hwaccel_output_format option
+    /// Note: QSV returns None because we handle frame upload explicitly in the filter chain.
+    /// This allows graceful fallback to software decoding when QSV can't decode the input codec.
     pub fn hwaccel_output_format(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("cuda"),
-            Self::Qsv => Some("qsv"),
+            // QSV: Don't force output format - we'll use hwupload in filter chain instead.
+            // This handles cases where QSV can't decode certain codecs (e.g., AV1) and
+            // FFmpeg falls back to software decoding.
+            Self::Qsv => None,
             _ => None,
         }
     }

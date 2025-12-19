@@ -100,6 +100,8 @@ Optional:
 - `TEMP_DIR` - Default ./temp
 - `FFMPEG_PATH` / `FFPROBE_PATH` - Default uses system PATH
 - `RUST_LOG` - Logging level
+- `DVM_NAME` - Override DVM announcement name (default: "Video Transform DVM")
+- `DVM_ABOUT` - Override DVM announcement description
 
 ## Key Dependencies
 
