@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use url::Url;
 
 use crate::error::ConfigError;
+use crate::util::FfmpegPaths;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -51,13 +52,8 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./temp"));
 
-        let ffmpeg_path = std::env::var("FFMPEG_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("ffmpeg"));
-
-        let ffprobe_path = std::env::var("FFPROBE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("ffprobe"));
+        // Use FFmpeg discovery
+        let ffmpeg_paths = FfmpegPaths::discover()?;
 
         let http_port = std::env::var("HTTP_PORT")
             .unwrap_or_else(|_| "3000".to_string())
@@ -73,8 +69,8 @@ impl Config {
             blossom_servers,
             blob_expiration_days,
             temp_dir,
-            ffmpeg_path,
-            ffprobe_path,
+            ffmpeg_path: ffmpeg_paths.ffmpeg,
+            ffprobe_path: ffmpeg_paths.ffprobe,
             http_port,
             dvm_name,
             dvm_about,
