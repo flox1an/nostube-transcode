@@ -31,6 +31,12 @@ pub enum ConfigError {
 
     #[error("Invalid value for {0}")]
     InvalidValue(&'static str),
+
+    #[error("FFmpeg not found. Searched: {0}")]
+    FfmpegNotFound(String),
+
+    #[error("FFprobe not found. Searched: {0}")]
+    FfprobeNotFound(String),
 }
 
 #[derive(Error, Debug)]
