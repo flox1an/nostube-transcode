@@ -359,6 +359,12 @@ impl FfmpegMp4Command {
         }
     }
 
+    /// Set the CRF (quality) value
+    pub fn with_crf(mut self, crf: u32) -> Self {
+        self.crf = crf;
+        self
+    }
+
     /// Run the FFmpeg MP4 encoding command asynchronously
     pub async fn run(&self, ffmpeg_path: &Path) -> Result<(), VideoError> {
         let mut cmd = TokioCommand::new(ffmpeg_path);

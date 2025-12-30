@@ -77,10 +77,21 @@ impl Default for TransformConfig {
 
 impl TransformConfig {
     /// Create a transform config based on input video height.
-    /// For 4K (height >= 2160), includes 360p, 720p, 1080p (encoded), and 2160p (original).
-    /// For smaller inputs, includes 360p, 720p, and original resolution.
+    /// For 4K (height >= 2160), includes 240p, 360p, 480p, 720p, 1080p (encoded), and 2160p (original).
+    /// For smaller inputs, includes 240p, 360p, 480p, 720p, and original resolution.
     pub fn for_resolution(input_height: Option<u32>) -> Self {
         let mut resolutions = HashMap::new();
+
+        resolutions.insert(
+            "240p".to_string(),
+            ResolutionConfig {
+                width: Some(426),
+                height: Some(240),
+                quality: Some(30),
+                audio_bitrate: Some("64k".to_string()),
+                ..Default::default()
+            },
+        );
 
         resolutions.insert(
             "360p".to_string(),
@@ -89,6 +100,17 @@ impl TransformConfig {
                 height: Some(360),
                 quality: Some(28),
                 audio_bitrate: Some("96k".to_string()),
+                ..Default::default()
+            },
+        );
+
+        resolutions.insert(
+            "480p".to_string(),
+            ResolutionConfig {
+                width: Some(854),
+                height: Some(480),
+                quality: Some(26),
+                audio_bitrate: Some("128k".to_string()),
                 ..Default::default()
             },
         );
@@ -268,6 +290,7 @@ impl VideoProcessor {
         &self,
         input_url: &str,
         resolution: Resolution,
+        quality: Option<u32>,
     ) -> Result<Mp4TransformResult, VideoError> {
         info!(
             url = %input_url,
@@ -286,7 +309,10 @@ impl VideoProcessor {
         let output_path = output_dir.join(format!("output_{}.mp4", resolution.as_str()));
 
         // Build and run FFmpeg command with hardware acceleration
-        let ffmpeg = FfmpegMp4Command::new(input_url, output_path.clone(), resolution, self.hwaccel);
+        let mut ffmpeg = FfmpegMp4Command::new(input_url, output_path.clone(), resolution, self.hwaccel);
+        if let Some(q) = quality {
+            ffmpeg = ffmpeg.with_crf(q);
+        }
         ffmpeg.run(&self.config.ffmpeg_path).await?;
 
         info!(output = %output_path.display(), "MP4 transformation complete");
@@ -357,8 +383,10 @@ mod tests {
     #[test]
     fn test_default_transform_config() {
         let config = TransformConfig::default();
-        assert_eq!(config.resolutions.len(), 3);
+        assert_eq!(config.resolutions.len(), 5);
+        assert!(config.resolutions.contains_key("240p"));
         assert!(config.resolutions.contains_key("360p"));
+        assert!(config.resolutions.contains_key("480p"));
         assert!(config.resolutions.contains_key("720p"));
         assert!(config.resolutions.contains_key("1080p"));
         assert!(config.resolutions.get("1080p").unwrap().is_original);
@@ -368,8 +396,10 @@ mod tests {
     #[test]
     fn test_transform_config_for_4k_input() {
         let config = TransformConfig::for_resolution(Some(2160));
-        assert_eq!(config.resolutions.len(), 4);
+        assert_eq!(config.resolutions.len(), 6);
+        assert!(config.resolutions.contains_key("240p"));
         assert!(config.resolutions.contains_key("360p"));
+        assert!(config.resolutions.contains_key("480p"));
         assert!(config.resolutions.contains_key("720p"));
         assert!(config.resolutions.contains_key("1080p"));
         assert!(config.resolutions.contains_key("2160p"));
@@ -387,8 +417,10 @@ mod tests {
     #[test]
     fn test_transform_config_for_non_4k_input() {
         let config = TransformConfig::for_resolution(Some(1080));
-        assert_eq!(config.resolutions.len(), 3);
+        assert_eq!(config.resolutions.len(), 5);
+        assert!(config.resolutions.contains_key("240p"));
         assert!(config.resolutions.contains_key("360p"));
+        assert!(config.resolutions.contains_key("480p"));
         assert!(config.resolutions.contains_key("720p"));
         assert!(config.resolutions.contains_key("1080p"));
         assert!(!config.resolutions.contains_key("2160p"));
@@ -400,9 +432,9 @@ mod tests {
     #[test]
     fn test_resolution_label() {
         let config = TransformConfig::for_resolution(None);
-        assert_eq!(config.resolution_label(), "360p, 720p, 1080p");
+        assert_eq!(config.resolution_label(), "240p, 360p, 480p, 720p, 1080p");
 
         let config_4k = TransformConfig::for_resolution(Some(2160));
-        assert_eq!(config_4k.resolution_label(), "360p, 720p, 1080p, 2160p");
+        assert_eq!(config_4k.resolution_label(), "240p, 360p, 480p, 720p, 1080p, 2160p");
     }
 }

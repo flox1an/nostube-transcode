@@ -26,6 +26,7 @@ impl OutputMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Resolution {
+    R240p,
     R360p,
     R480p,
     #[default]
@@ -36,6 +37,7 @@ pub enum Resolution {
 impl Resolution {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
+            "240p" => Self::R240p,
             "360p" => Self::R360p,
             "480p" => Self::R480p,
             "1080p" => Self::R1080p,
@@ -45,6 +47,7 @@ impl Resolution {
 
     pub fn dimensions(&self) -> (u32, u32) {
         match self {
+            Self::R240p => (426, 240),
             Self::R360p => (640, 360),
             Self::R480p => (854, 480),
             Self::R720p => (1280, 720),
@@ -54,6 +57,7 @@ impl Resolution {
 
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::R240p => "240p",
             Self::R360p => "360p",
             Self::R480p => "480p",
             Self::R720p => "720p",

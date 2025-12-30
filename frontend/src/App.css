@@ -481,3 +481,138 @@
 .mp4-details p {
   font-size: 0.95rem;
 }
+
+/* Self Test */
+.selftest-container {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1.25rem;
+  width: 100%;
+  max-width: 500px;
+  margin-top: 1rem;
+}
+
+.selftest-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.selftest-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #888;
+}
+
+.selftest-button {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #333;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.selftest-button:hover:not(:disabled) {
+  background: #444;
+  border-color: #555;
+}
+
+.selftest-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.selftest-running {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 0;
+  color: #888;
+}
+
+.selftest-running p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #333;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.selftest-result {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.selftest-result.success {
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.selftest-result.failure {
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.result-header {
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.result-badge {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.result-badge.success {
+  color: #34d399;
+}
+
+.result-badge.failure {
+  color: #f87171;
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.result-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.result-label {
+  font-size: 0.75rem;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.result-value {
+  font-size: 0.9rem;
+  color: #ccc;
+}
+
+.result-value.highlight {
+  color: #34d399;
+  font-weight: 600;
+  font-size: 1rem;
+}

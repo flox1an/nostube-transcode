@@ -119,8 +119,9 @@ impl JobHandler {
                 let estimated_transcode_secs = (video_duration_secs / 3.0) as u64;
 
                 // Transform with periodic progress updates
+                // Use quality 15 for good quality on VideoToolbox (maps to q:v 70)
                 let result = self
-                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform_mp4(input_url, job.resolution))
+                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform_mp4(input_url, job.resolution, Some(15)))
                     .await?;
 
                 // Get file size for upload estimation

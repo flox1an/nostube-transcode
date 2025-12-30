@@ -1,5 +1,6 @@
 use nostr_sdk::Keys;
 use std::path::PathBuf;
+use tracing::debug;
 use url::Url;
 
 use crate::error::ConfigError;
@@ -21,7 +22,10 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        dotenvy::dotenv().ok();
+        match dotenvy::dotenv() {
+            Ok(path) => debug!("Loaded .env from {:?}", path),
+            Err(e) => debug!("No .env loaded: {}", e),
+        }
 
         let private_key = std::env::var("NOSTR_PRIVATE_KEY")
             .map_err(|_| ConfigError::Missing("NOSTR_PRIVATE_KEY"))?;
@@ -62,6 +66,12 @@ impl Config {
 
         let dvm_name = std::env::var("DVM_NAME").ok();
         let dvm_about = std::env::var("DVM_ABOUT").ok();
+
+        debug!(
+            dvm_name = ?dvm_name,
+            dvm_about = ?dvm_about,
+            "Loaded DVM configuration from environment"
+        );
 
         Ok(Self {
             nostr_keys,

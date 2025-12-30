@@ -3,6 +3,7 @@ import type { Event } from "nostr-tools";
 import { LoginButton } from "./components/LoginButton";
 import { DvmSelector } from "./components/DvmSelector";
 import { VideoForm, type OutputMode, type Resolution } from "./components/VideoForm";
+import { SelfTest } from "./components/SelfTest";
 import { JobProgress, type StatusMessage } from "./components/JobProgress";
 import { VideoPlayer } from "./components/VideoPlayer";
 import { EventDisplay } from "./components/EventDisplay";
@@ -169,6 +170,7 @@ function App() {
           <p>Transform videos to HLS format using Nostr</p>
           <LoginButton onLogin={handleLogin} onError={handleLoginError} />
           {errorMessage && <p className="error-message">{errorMessage}</p>}
+          <SelfTest />
         </div>
       </div>
     );

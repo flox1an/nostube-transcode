@@ -1,7 +1,7 @@
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::config::Config;
 use crate::dvm::events::DVM_VIDEO_TRANSFORM_REQUEST_KIND;
@@ -36,7 +36,12 @@ pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuild
         )
     });
 
+    // Expiration: 1 hour from now
+    let expiration = Timestamp::now() + Duration::from_secs(3600);
+
     let mut tags = vec![
+        // NIP-40 expiration tag
+        Tag::expiration(expiration),
         // NIP-89 required tags
         Tag::custom(
             TagKind::Custom("d".into()),
@@ -130,9 +135,19 @@ impl AnnouncementPublisher {
     }
 
     async fn publish_announcement(&self) {
-        let event = build_announcement_event(&self.config, self.hwaccel);
+        let name = self
+            .config
+            .dvm_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_DVM_NAME.to_string());
 
-        debug!("Publishing DVM announcement");
+        info!(
+            name = %name,
+            about = ?self.config.dvm_about,
+            "Publishing DVM announcement"
+        );
+
+        let event = build_announcement_event(&self.config, self.hwaccel);
 
         match self.publisher.publish(event).await {
             Ok(_) => {

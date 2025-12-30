@@ -73,9 +73,14 @@ export async function discoverDvms(
   return new Promise((resolve) => {
     const dvms = new Map<string, DvmService>();
     let resolved = false;
+    const oneHourAgo = Math.floor(Date.now() / 1000) - 3600;
 
     const sub = pool.subscribeMany(RELAYS, filter, {
       onevent(event: Event) {
+        // Ignore announcements older than 1 hour
+        if (event.created_at < oneHourAgo) {
+          return;
+        }
         const dvm = parseAnnouncementEvent(event);
         if (dvm) {
           // Keep only the newest announcement per pubkey
