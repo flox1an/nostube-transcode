@@ -50,6 +50,9 @@ pub enum VideoError {
     #[error("Invalid video URL: {0}")]
     InvalidUrl(String),
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("Playlist parse error: {0}")]
     PlaylistParse(String),
 

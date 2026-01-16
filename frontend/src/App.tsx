@@ -1,13 +1,13 @@
 import { useState, useCallback, useRef } from "react";
 import type { Event } from "nostr-tools";
-import { LoginButton } from "./components/LoginButton";
+import { LoginDialog } from "./components/LoginDialog";
 import { DvmSelector } from "./components/DvmSelector";
-import { VideoForm, type OutputMode, type Resolution, type Codec } from "./components/VideoForm";
+import { VideoForm, type OutputMode, type Resolution, type Codec, type HlsResolution } from "./components/VideoForm";
 import { SelfTest } from "./components/SelfTest";
 import { JobProgress, type StatusMessage } from "./components/JobProgress";
 import { VideoPlayer } from "./components/VideoPlayer";
 import { EventDisplay } from "./components/EventDisplay";
-import { publishTransformRequest, subscribeToResponses } from "./nostr/client";
+import { publishTransformRequest, subscribeToResponses, logout as logoutClient, getCurrentSigner, type LoginResult, type LoginMethod } from "./nostr/client";
 import { parseStatusEvent, parseResultEvent, type DvmResult } from "./nostr/events";
 import type { DvmService } from "./nostr/discovery";
 import "./App.css";
@@ -28,6 +28,7 @@ function formatBytes(bytes: number): string {
 
 function App() {
   const [pubkey, setPubkey] = useState<string | null>(null);
+  const [loginMethod, setLoginMethod] = useState<LoginMethod | null>(null);
   const [selectedDvm, setSelectedDvm] = useState<DvmService | null>(null);
   const [appState, setAppState] = useState<AppState>("idle");
   const [statusMessages, setStatusMessages] = useState<StatusMessage[]>([]);
@@ -35,6 +36,7 @@ function App() {
   const [dvmResult, setDvmResult] = useState<DvmResult | null>(null);
   const [requestEvent, setRequestEvent] = useState<Event | null>(null);
   const [responseEvent, setResponseEvent] = useState<Event | null>(null);
+  const [showRawJson, setShowRawJson] = useState(false);
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -42,8 +44,9 @@ function App() {
     setSelectedDvm(dvm);
   }, []);
 
-  const handleLogin = useCallback((pk: string) => {
-    setPubkey(pk);
+  const handleLogin = useCallback((result: LoginResult) => {
+    setPubkey(result.pubkey);
+    setLoginMethod(result.method);
     setErrorMessage(null);
   }, []);
 
@@ -57,7 +60,9 @@ function App() {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
     }
+    logoutClient();
     setPubkey(null);
+    setLoginMethod(null);
     setAppState("idle");
     setStatusMessages([]);
     setErrorMessage(null);
@@ -66,7 +71,7 @@ function App() {
     setResponseEvent(null);
   }, []);
 
-  const handleSubmit = useCallback(async (videoUrl: string, mode: OutputMode, resolution: Resolution, codec: Codec) => {
+  const handleSubmit = useCallback(async (videoUrl: string, mode: OutputMode, resolution: Resolution, codec: Codec, hlsResolutions?: HlsResolution[], encryption?: boolean) => {
     if (!selectedDvm) {
       setErrorMessage("Please select a DVM first");
       return;
@@ -93,35 +98,50 @@ function App() {
         selectedDvm.relays,
         mode,
         resolution,
-        codec
+        codec,
+        hlsResolutions,
+        encryption
       );
       setRequestEvent(signedEvent);
       setAppState("processing");
 
       // Subscribe to responses
+      const signer = getCurrentSigner();
       unsubscribeRef.current = subscribeToResponses(
         eventId,
         selectedDvm.pubkey,
         selectedDvm.relays,
         (response) => {
           if (response.type === "status") {
-            const { status, message, eta } = parseStatusEvent(response.event);
-            setStatusMessages((prev) => [
-              ...prev,
-              { status, message, timestamp: Date.now(), eta },
-            ]);
+            // Parse status event (async for encrypted events)
+            parseStatusEvent(response.event, signer ?? undefined, selectedDvm.pubkey)
+              .then(({ status, message, eta }) => {
+                setStatusMessages((prev) => [
+                  ...prev,
+                  { status, message, timestamp: Date.now(), eta },
+                ]);
 
-            if (status === "error") {
-              setAppState("error");
-              setErrorMessage(message || "Job failed");
-            }
+                if (status === "error") {
+                  setAppState("error");
+                  setErrorMessage(message || "Job failed");
+                }
+              })
+              .catch((e) => {
+                console.error("Failed to parse status event:", e);
+              });
           } else if (response.type === "result") {
             setResponseEvent(response.event);
-            const result = parseResultEvent(response.event);
-            if (result) {
-              setDvmResult(result);
-              setAppState("complete");
-            }
+            // Parse result event (async for encrypted events)
+            parseResultEvent(response.event, signer ?? undefined, selectedDvm.pubkey)
+              .then((result) => {
+                if (result) {
+                  setDvmResult(result);
+                  setAppState("complete");
+                }
+              })
+              .catch((e) => {
+                console.error("Failed to parse result event:", e);
+              });
           }
         }
       );
@@ -169,7 +189,7 @@ function App() {
         <div className="login-screen">
           <h1>DVM Video Processor</h1>
           <p>Transform videos to HLS format using Nostr</p>
-          <LoginButton onLogin={handleLogin} onError={handleLoginError} />
+          <LoginDialog onLogin={handleLogin} onError={handleLoginError} />
           {errorMessage && <p className="error-message">{errorMessage}</p>}
           <SelfTest />
         </div>
@@ -184,6 +204,7 @@ function App() {
         <h1>DVM Video Processor</h1>
         <div className="user-info">
           <span className="pubkey">{truncatePubkey(pubkey)}</span>
+          {loginMethod && <span className="login-method">via {loginMethod}</span>}
           <button className="logout-button" onClick={handleLogout}>
             Logout
           </button>
@@ -202,12 +223,18 @@ function App() {
           disabled={appState === "submitting" || appState === "processing" || !selectedDvm}
         />
 
-        {requestEvent && <EventDisplay event={requestEvent} />}
+        {requestEvent && (
+          <EventDisplay
+            event={requestEvent}
+            signer={getCurrentSigner()}
+            dvmPubkey={selectedDvm?.pubkey}
+          />
+        )}
 
         <JobProgress messages={statusMessages} error={errorMessage || undefined} />
 
         {dvmResult && dvmResult.type === "hls" && (
-          <VideoPlayer src={dvmResult.master_playlist} />
+          <VideoPlayer src={dvmResult.master_playlist} encryptionKey={dvmResult.encryption_key} />
         )}
 
         {dvmResult && dvmResult.type === "mp4" && dvmResult.urls[0] && (
@@ -219,7 +246,14 @@ function App() {
           />
         )}
 
-        {responseEvent && <EventDisplay event={responseEvent} title="DVM Response Event" />}
+        {responseEvent && (
+          <EventDisplay
+            event={responseEvent}
+            title="DVM Response Event"
+            signer={getCurrentSigner()}
+            dvmPubkey={selectedDvm?.pubkey}
+          />
+        )}
 
         {dvmResult && (
           <div className="result-details">
@@ -260,6 +294,19 @@ function App() {
                 <p><strong>Servers:</strong> {dvmResult.urls.length}</p>
               </div>
             )}
+            <div className="raw-json-section">
+              <button
+                className="toggle-json-btn"
+                onClick={() => setShowRawJson(!showRawJson)}
+              >
+                {showRawJson ? "Hide" : "Show"} Raw JSON
+              </button>
+              {showRawJson && (
+                <pre className="json-display">
+                  {JSON.stringify(dvmResult, null, 2)}
+                </pre>
+              )}
+            </div>
           </div>
         )}
 

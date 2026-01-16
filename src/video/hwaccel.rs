@@ -57,6 +57,45 @@ impl HwAccel {
         Self::Software
     }
 
+    /// Detect all available hardware acceleration methods
+    #[allow(unreachable_code)]
+    pub fn detect_all() -> Vec<Self> {
+        let mut available = Vec::new();
+
+        #[cfg(target_os = "macos")]
+        {
+            available.push(Self::VideoToolbox);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if Self::is_nvidia_available() {
+                available.push(Self::Nvenc);
+            }
+            if Self::is_vaapi_available() {
+                available.push(Self::Vaapi);
+            }
+            if Self::is_qsv_available() {
+                available.push(Self::Qsv);
+            }
+        }
+
+        // Software is always available
+        available.push(Self::Software);
+        available
+    }
+
+    /// Get the name of this hardware acceleration method
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Nvenc => "NVIDIA NVENC",
+            Self::Vaapi => "VAAPI",
+            Self::Qsv => "Intel QSV",
+            Self::VideoToolbox => "Apple VideoToolbox",
+            Self::Software => "Software",
+        }
+    }
+
     /// Check if NVIDIA GPU is available (Linux)
     #[cfg(target_os = "linux")]
     fn is_nvidia_available() -> bool {

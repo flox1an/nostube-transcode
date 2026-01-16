@@ -3,8 +3,13 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 use tokio::fs::File;
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -16,6 +21,35 @@ use crate::error::BlossomError;
 use crate::util::hash_file;
 use crate::video::playlist::PlaylistRewriter;
 use crate::video::TransformResult;
+
+/// A wrapper around an AsyncRead that tracks bytes read via an atomic counter
+pub struct ProgressReader<R> {
+    inner: R,
+    bytes_read: Arc<AtomicU64>,
+}
+
+impl<R> ProgressReader<R> {
+    pub fn new(inner: R, bytes_read: Arc<AtomicU64>) -> Self {
+        Self { inner, bytes_read }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for ProgressReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+        let after = buf.filled().len();
+        let bytes_read = (after - before) as u64;
+        if bytes_read > 0 {
+            self.bytes_read.fetch_add(bytes_read, Ordering::Relaxed);
+        }
+        result
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobDescriptor {
@@ -45,6 +79,11 @@ impl BlossomClient {
         }
     }
 
+    /// Get the number of configured Blossom servers
+    pub fn server_count(&self) -> usize {
+        self.config.blossom_servers.len()
+    }
+
     /// Upload a file to all configured Blossom servers
     /// Returns list of successful uploads (at least one required)
     pub async fn upload_file_to_all(
@@ -52,7 +91,24 @@ impl BlossomClient {
         path: &Path,
         mime_type: &str,
     ) -> Result<Vec<BlobDescriptor>, BlossomError> {
+        self.upload_file_to_all_with_progress(path, mime_type, |_, _| {})
+            .await
+    }
+
+    /// Upload a file to all configured Blossom servers with progress callback
+    /// The callback is called after each server upload with (bytes_uploaded, upload_duration)
+    /// Returns list of successful uploads (at least one required)
+    pub async fn upload_file_to_all_with_progress<F>(
+        &self,
+        path: &Path,
+        mime_type: &str,
+        mut on_progress: F,
+    ) -> Result<Vec<BlobDescriptor>, BlossomError>
+    where
+        F: FnMut(u64, Duration),
+    {
         let metadata = tokio::fs::metadata(path).await?;
+        let file_size = metadata.len();
         let sha256 = hash_file(path).await?;
 
         debug!(path = %path.display(), sha256 = %sha256, "Uploading file to all servers");
@@ -60,15 +116,19 @@ impl BlossomClient {
         let mut results = Vec::new();
 
         for server in &self.config.blossom_servers {
+            let upload_start = Instant::now();
             match self
-                .upload_to_server(server, path, &sha256, metadata.len(), mime_type)
+                .upload_to_server(server, path, &sha256, file_size, mime_type)
                 .await
             {
                 Ok(blob) => {
+                    let upload_duration = upload_start.elapsed();
+                    on_progress(file_size, upload_duration);
                     info!(
                         url = %blob.url,
                         sha256 = %blob.sha256,
                         server = %server,
+                        duration_ms = upload_duration.as_millis(),
                         "File uploaded successfully"
                     );
                     results.push(blob);
@@ -98,6 +158,107 @@ impl BlossomClient {
         Ok(results.into_iter().next().unwrap())
     }
 
+    /// Upload a file to all configured Blossom servers with real-time progress tracking
+    /// The bytes_uploaded counter is updated in real-time as bytes are sent
+    /// Returns list of successful uploads (at least one required)
+    pub async fn upload_file_to_all_with_realtime_progress(
+        &self,
+        path: &Path,
+        mime_type: &str,
+        bytes_uploaded: Arc<AtomicU64>,
+    ) -> Result<Vec<BlobDescriptor>, BlossomError> {
+        let metadata = tokio::fs::metadata(path).await?;
+        let file_size = metadata.len();
+        let sha256 = hash_file(path).await?;
+
+        debug!(path = %path.display(), sha256 = %sha256, "Uploading file to all servers");
+
+        let mut results = Vec::new();
+
+        for server in &self.config.blossom_servers {
+            let upload_start = Instant::now();
+            // Reset the counter for each server (since we're uploading the full file again)
+            let server_bytes = Arc::new(AtomicU64::new(0));
+            match self
+                .upload_to_server_with_progress(server, path, &sha256, file_size, mime_type, server_bytes.clone())
+                .await
+            {
+                Ok(blob) => {
+                    let upload_duration = upload_start.elapsed();
+                    // Add the bytes from this server to the total
+                    bytes_uploaded.fetch_add(file_size, Ordering::Relaxed);
+                    info!(
+                        url = %blob.url,
+                        sha256 = %blob.sha256,
+                        server = %server,
+                        duration_ms = upload_duration.as_millis(),
+                        "File uploaded successfully"
+                    );
+                    results.push(blob);
+                }
+                Err(e) => {
+                    warn!(server = %server, error = %e, "Upload failed");
+                }
+            }
+        }
+
+        if results.is_empty() {
+            return Err(BlossomError::UploadFailed(
+                "All server uploads failed".into(),
+            ));
+        }
+
+        Ok(results)
+    }
+
+    /// Upload a file to a single server with progress tracking
+    /// The bytes_uploaded counter is updated in real-time as bytes are sent
+    pub async fn upload_to_server_streaming_progress(
+        &self,
+        path: &Path,
+        mime_type: &str,
+        bytes_uploaded: Arc<AtomicU64>,
+    ) -> Result<Vec<BlobDescriptor>, BlossomError> {
+        let metadata = tokio::fs::metadata(path).await?;
+        let file_size = metadata.len();
+        let sha256 = hash_file(path).await?;
+
+        debug!(path = %path.display(), sha256 = %sha256, "Uploading file with progress tracking");
+
+        let mut results = Vec::new();
+
+        for server in &self.config.blossom_servers {
+            let upload_start = Instant::now();
+            match self
+                .upload_to_server_with_progress(server, path, &sha256, file_size, mime_type, bytes_uploaded.clone())
+                .await
+            {
+                Ok(blob) => {
+                    let upload_duration = upload_start.elapsed();
+                    info!(
+                        url = %blob.url,
+                        sha256 = %blob.sha256,
+                        server = %server,
+                        duration_ms = upload_duration.as_millis(),
+                        "File uploaded successfully"
+                    );
+                    results.push(blob);
+                }
+                Err(e) => {
+                    warn!(server = %server, error = %e, "Upload failed");
+                }
+            }
+        }
+
+        if results.is_empty() {
+            return Err(BlossomError::UploadFailed(
+                "All server uploads failed".into(),
+            ));
+        }
+
+        Ok(results)
+    }
+
     async fn upload_to_server(
         &self,
         server: &Url,
@@ -106,10 +267,24 @@ impl BlossomClient {
         size: u64,
         mime_type: &str,
     ) -> Result<BlobDescriptor, BlossomError> {
+        let dummy_counter = Arc::new(AtomicU64::new(0));
+        self.upload_to_server_with_progress(server, path, sha256, size, mime_type, dummy_counter).await
+    }
+
+    async fn upload_to_server_with_progress(
+        &self,
+        server: &Url,
+        path: &Path,
+        sha256: &str,
+        size: u64,
+        mime_type: &str,
+        bytes_uploaded: Arc<AtomicU64>,
+    ) -> Result<BlobDescriptor, BlossomError> {
         let auth_token = create_upload_auth_token(&self.config.nostr_keys, size, sha256)?;
 
         let file = File::open(path).await?;
-        let stream = ReaderStream::new(file);
+        let progress_reader = ProgressReader::new(file, bytes_uploaded);
+        let stream = ReaderStream::new(progress_reader);
         let body = reqwest::Body::wrap_stream(stream);
 
         let url = server.join("/upload")?;
@@ -179,6 +354,19 @@ impl BlossomClient {
         &self,
         result: &TransformResult,
     ) -> Result<HlsResult, BlossomError> {
+        self.upload_hls_output_with_progress(result, |_, _| {}).await
+    }
+
+    /// Upload all HLS output files to Blossom with progress callback
+    /// The callback is called after each file upload with (bytes_uploaded, upload_duration)
+    pub async fn upload_hls_output_with_progress<F>(
+        &self,
+        result: &TransformResult,
+        mut on_progress: F,
+    ) -> Result<HlsResult, BlossomError>
+    where
+        F: FnMut(u64, Duration),
+    {
         let mut rewriter = PlaylistRewriter::new();
         let mut playlist_hashes: HashMap<String, String> = HashMap::new();
         let mut stream_playlist_urls: HashMap<String, String> = HashMap::new();
@@ -212,8 +400,11 @@ impl BlossomClient {
 
             rewriter.add_segment(filename, &sha256);
 
-            // Upload the segment
+            // Upload the segment and track timing
+            let upload_start = Instant::now();
             self.upload_file(segment_path, "video/mp4").await?;
+            let upload_duration = upload_start.elapsed();
+            on_progress(file_size, upload_duration);
         }
 
         // Rewrite and upload stream playlists
@@ -236,10 +427,13 @@ impl BlossomClient {
             // Add playlist size to stream total
             *stream_sizes.entry(original_name.to_string()).or_insert(0) += playlist_size;
 
-            // Upload and track hash
+            // Upload and track hash with timing
+            let upload_start = Instant::now();
             let blob = self
                 .upload_file(&temp_path, "application/vnd.apple.mpegurl")
                 .await?;
+            let upload_duration = upload_start.elapsed();
+            on_progress(playlist_size, upload_duration);
 
             playlist_hashes.insert(original_name.to_string(), blob.sha256);
             stream_playlist_urls.insert(original_name.to_string(), blob.url);
@@ -261,11 +455,15 @@ impl BlossomClient {
         tokio::fs::write(&temp_master, &rewritten_master).await?;
 
         // Add master playlist size to total
-        total_size += rewritten_master.len() as u64;
+        let master_size = rewritten_master.len() as u64;
+        total_size += master_size;
 
+        let upload_start = Instant::now();
         let master_blob = self
             .upload_file(&temp_master, "application/vnd.apple.mpegurl")
             .await?;
+        let upload_duration = upload_start.elapsed();
+        on_progress(master_size, upload_duration);
 
         // Clean up temp file
         let _ = tokio::fs::remove_file(&temp_master).await;
@@ -274,6 +472,7 @@ impl BlossomClient {
             master_playlist: master_blob.url,
             stream_playlists,
             total_size_bytes: total_size,
+            encryption_key: Some(result.encryption_key.clone()),
         })
     }
 

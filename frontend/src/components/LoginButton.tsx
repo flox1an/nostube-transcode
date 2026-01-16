@@ -22,7 +22,7 @@ export function LoginButton({ onLogin, onError }: LoginButtonProps) {
 
   return (
     <button className="login-button" onClick={handleClick}>
-      Connect Wallet
+      Login with Extension
     </button>
   );
 }

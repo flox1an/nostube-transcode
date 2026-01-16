@@ -26,6 +26,11 @@ impl SubscriptionManager {
         Ok(Self { config, client })
     }
 
+    /// Get the DVM keys for encryption/decryption
+    pub fn keys(&self) -> &Keys {
+        &self.config.nostr_keys
+    }
+
     /// Connect to relays and start listening for DVM requests
     pub async fn run(&self, job_tx: mpsc::Sender<JobContext>) -> Result<(), DvmError> {
         info!("Connecting to relays...");
@@ -44,12 +49,14 @@ impl SubscriptionManager {
 
         // Deduplication set wrapped in Arc<Mutex> for sharing across async closure
         let seen: Arc<Mutex<HashSet<EventId>>> = Arc::new(Mutex::new(HashSet::new()));
+        let keys = self.config.nostr_keys.clone();
 
         // Handle events
         self.client
             .handle_notifications(|notification| {
                 let job_tx = job_tx.clone();
                 let seen = seen.clone();
+                let keys = keys.clone();
 
                 async move {
                     if let RelayPoolNotification::Event { event, .. } = notification {
@@ -61,8 +68,12 @@ impl SubscriptionManager {
 
                                 debug!(event_id = %event.id, "Received DVM request");
 
-                                match JobContext::from_event((*event).clone()) {
+                                // Use from_event_with_keys to handle encrypted requests
+                                match JobContext::from_event_with_keys((*event).clone(), &keys) {
                                     Ok(context) => {
+                                        if context.was_encrypted {
+                                            debug!(event_id = %context.event_id(), "Decrypted encrypted request");
+                                        }
                                         if let Err(e) = job_tx.send(context).await {
                                             error!("Failed to queue job: {}", e);
                                         }

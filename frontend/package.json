@@ -14,6 +14,7 @@
     "applesauce-net": "^0.10.0",
     "applesauce-signers": "^4.2.0",
     "hls.js": "^1.6.15",
+    "nostr-tools": "^2.19.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

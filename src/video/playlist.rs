@@ -5,6 +5,11 @@ use tokio::fs;
 
 use crate::error::VideoError;
 
+/// Placeholder URI for encryption key in HLS playlists.
+/// This URN won't trigger HTTP requests and signals that the key is delivered out-of-band.
+/// The frontend intercepts key loading and provides the actual key from the Nostr event.
+pub const ENCRYPTION_KEY_PLACEHOLDER_URI: &str = "urn:nostr:key";
+
 /// Rewrites M3U8 playlists to use hash-based filenames for Blossom uploads
 pub struct PlaylistRewriter {
     /// Map from original filename to SHA-256 hash
@@ -31,6 +36,7 @@ impl PlaylistRewriter {
     }
 
     /// Rewrite playlist content
+    /// Replaces #EXT-X-KEY URI with placeholder (key is delivered via Nostr, not fetched)
     pub fn rewrite_content(&self, content: &str) -> Result<String, VideoError> {
         let uri_regex =
             Regex::new(r#"URI="([^"]+)""#).map_err(|e| VideoError::PlaylistParse(e.to_string()))?;
@@ -40,7 +46,12 @@ impl PlaylistRewriter {
         let mut output = String::new();
 
         for line in content.lines() {
-            let new_line = if line.starts_with('#') {
+            let new_line = if line.starts_with("#EXT-X-KEY") {
+                // Replace key URI with placeholder - actual key delivered via Nostr event
+                uri_regex
+                    .replace(line, format!(r#"URI="{}""#, ENCRYPTION_KEY_PLACEHOLDER_URI))
+                    .to_string()
+            } else if line.starts_with('#') {
                 // Check for URI in tags like EXT-X-MAP
                 if let Some(caps) = uri_regex.captures(line) {
                     let original = &caps[1];
@@ -143,6 +154,35 @@ stream_0_001.m4s
         assert!(result.contains("abc123.m4s"));
         assert!(result.contains("def456.m4s"));
         assert!(!result.contains("stream_0_000"));
+    }
+
+    #[test]
+    fn test_rewrite_playlist_replaces_ext_x_key_uri() {
+        let mut rewriter = PlaylistRewriter::new();
+        rewriter.add_segment("stream_0_000.m4s", "abc123");
+        rewriter.add_segment("init_0.m4s", "init789");
+
+        let content = r#"#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:6
+#EXT-X-KEY:METHOD=AES-128,URI="http://example.com/key.bin"
+#EXT-X-MAP:URI="init_0.m4s"
+#EXTINF:6.000,
+stream_0_000.m4s
+#EXT-X-ENDLIST
+"#;
+
+        let result = rewriter.rewrite_content(content).unwrap();
+
+        // Should contain segment hashes
+        assert!(result.contains("init789.m4s"));
+        assert!(result.contains("abc123.m4s"));
+        // Should keep EXT-X-KEY but with placeholder URI
+        assert!(result.contains("#EXT-X-KEY"));
+        assert!(result.contains("METHOD=AES-128"));
+        assert!(result.contains(ENCRYPTION_KEY_PLACEHOLDER_URI));
+        // Original key URL should be replaced
+        assert!(!result.contains("http://example.com/key.bin"));
     }
 
     #[test]

@@ -16,6 +16,8 @@ pub struct FfmpegCommand {
     config: TransformConfig,
     hwaccel: HwAccel,
     codec: Codec,
+    /// Path to HLS key info file for AES-128 encryption
+    key_info_path: Option<PathBuf>,
 }
 
 impl FfmpegCommand {
@@ -26,7 +28,14 @@ impl FfmpegCommand {
             config,
             hwaccel,
             codec,
+            key_info_path: None,
         }
+    }
+
+    /// Enable AES-128 encryption with the given key info file
+    pub fn with_encryption(mut self, key_info_path: &Path) -> Self {
+        self.key_info_path = Some(key_info_path.to_path_buf());
+        self
     }
 
     /// Build the FFmpeg command
@@ -59,7 +68,7 @@ impl FfmpegCommand {
             .arg("-master_pl_name")
             .arg("master.m3u8")
             .arg("-hls_segment_filename")
-            .arg(self.output_dir.join("stream_%v_%03d.m4s"));
+            .arg(self.output_dir.join(format!("stream_%v_%03d.{}", self.config.segment_type.extension())));
 
         // Output pattern
         let output = self.output_dir.join("stream_%v.m3u8");
@@ -91,6 +100,18 @@ impl FfmpegCommand {
         self.add_output_options_tokio(&mut cmd);
 
         // HLS options
+        // Note: When encryption is used, segment_type must be mpegts (FFmpeg limitation)
+        let segment_type = if self.key_info_path.is_some() {
+            "mpegts"
+        } else {
+            self.config.segment_type.as_str()
+        };
+        let segment_ext = if self.key_info_path.is_some() {
+            "ts"
+        } else {
+            self.config.segment_type.extension()
+        };
+
         cmd.arg("-f")
             .arg("hls")
             .arg("-var_stream_map")
@@ -100,11 +121,16 @@ impl FfmpegCommand {
             .arg("-hls_list_size")
             .arg(self.config.hls_list_size.to_string())
             .arg("-hls_segment_type")
-            .arg(self.config.segment_type.as_str())
+            .arg(segment_type)
             .arg("-master_pl_name")
             .arg("master.m3u8")
             .arg("-hls_segment_filename")
-            .arg(self.output_dir.join("stream_%v_%03d.m4s"));
+            .arg(self.output_dir.join(format!("stream_%v_%03d.{}", segment_ext)));
+
+        // Add AES-128 encryption if key info file is provided
+        if let Some(ref key_info_path) = self.key_info_path {
+            cmd.arg("-hls_key_info_file").arg(key_info_path);
+        }
 
         // Output pattern
         let output = self.output_dir.join("stream_%v.m3u8");
