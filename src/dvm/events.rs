@@ -25,6 +25,29 @@ impl OutputMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Codec {
+    #[default]
+    H264,
+    H265,
+}
+
+impl Codec {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "h265" | "hevc" => Self::H265,
+            _ => Self::H264,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::H265 => "h265",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Resolution {
     R240p,
     R360p,
@@ -82,6 +105,7 @@ pub struct JobContext {
     pub relays: Vec<::url::Url>,
     pub mode: OutputMode,
     pub resolution: Resolution,
+    pub codec: Codec,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,7 +174,7 @@ impl JobContext {
     pub fn from_event(event: Event) -> Result<Self, DvmError> {
         let input = Self::extract_input(&event)?;
         let relays = Self::extract_relays(&event);
-        let (mode, resolution) = Self::extract_params(&event);
+        let (mode, resolution, codec) = Self::extract_params(&event);
 
         Ok(Self {
             request: event,
@@ -159,12 +183,14 @@ impl JobContext {
             relays,
             mode,
             resolution,
+            codec,
         })
     }
 
-    fn extract_params(event: &Event) -> (OutputMode, Resolution) {
+    fn extract_params(event: &Event) -> (OutputMode, Resolution, Codec) {
         let mut mode = OutputMode::default();
         let mut resolution = Resolution::default();
+        let mut codec = Codec::default();
 
         for tag in event.tags.iter() {
             let parts: Vec<&str> = tag.as_slice().iter().map(|s| s.as_str()).collect();
@@ -172,12 +198,13 @@ impl JobContext {
                 match parts[1] {
                     "mode" => mode = OutputMode::from_str(parts[2]),
                     "resolution" => resolution = Resolution::from_str(parts[2]),
+                    "codec" => codec = Codec::from_str(parts[2]),
                     _ => {}
                 }
             }
         }
 
-        (mode, resolution)
+        (mode, resolution, codec)
     }
 
     fn extract_input(event: &Event) -> Result<DvmInput, DvmError> {

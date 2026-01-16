@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 use crate::blossom::BlossomClient;
 use crate::config::Config;
 use crate::dvm::events::{
-    build_result_event, build_status_event, build_status_event_with_eta, DvmResult, JobContext,
+    build_result_event, build_status_event, build_status_event_with_eta, Codec, DvmResult, JobContext,
     JobStatus, Mp4Result, OutputMode,
 };
 use crate::error::DvmError;
@@ -96,7 +96,7 @@ impl JobHandler {
     async fn process_video(&self, job: &JobContext) -> Result<DvmResult, DvmError> {
         let input_url = &job.input.value;
 
-        debug!(url = %input_url, mode = ?job.mode, resolution = ?job.resolution, "Processing video");
+        debug!(url = %input_url, mode = ?job.mode, resolution = ?job.resolution, codec = ?job.codec, "Processing video");
 
         // Get video metadata for duration estimation
         let metadata = VideoMetadata::extract(input_url, &self.config.ffprobe_path).await;
@@ -112,7 +112,11 @@ impl JobHandler {
 
         match job.mode {
             OutputMode::Mp4 => {
-                let status_msg = format!("Transcoding to {} MP4", job.resolution.as_str());
+                let codec_name = match job.codec {
+                    Codec::H264 => "H.264",
+                    Codec::H265 => "H.265",
+                };
+                let status_msg = format!("Transcoding to {} {} MP4", job.resolution.as_str(), codec_name);
                 self.send_status(job, JobStatus::Processing, Some(&format!("{}...", status_msg))).await?;
 
                 // Estimate: hardware encoding is roughly 2-5x realtime, use 3x as baseline
@@ -121,7 +125,7 @@ impl JobHandler {
                 // Transform with periodic progress updates
                 // Use quality 15 for good quality on VideoToolbox (maps to q:v 70)
                 let result = self
-                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform_mp4(input_url, job.resolution, Some(15)))
+                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform_mp4(input_url, job.resolution, Some(15), job.codec))
                     .await?;
 
                 // Get file size for upload estimation
@@ -143,12 +147,17 @@ impl JobHandler {
                 // Cleanup temp files
                 result.cleanup().await;
 
+                // Set mimetype based on codec
+                let mimetype = match job.codec {
+                    Codec::H264 => "video/mp4; codecs=\"avc1.64001f,mp4a.40.2\"",
+                    Codec::H265 => "video/mp4; codecs=\"hvc1,mp4a.40.2\"",
+                };
+
                 Ok(DvmResult::Mp4(Mp4Result {
                     urls: blobs.into_iter().map(|b| b.url).collect(),
                     resolution: job.resolution.as_str().to_string(),
                     size_bytes: file_size,
-                    // H.265 (HEVC) video + AAC audio in MP4 container
-                    mimetype: Some("video/mp4; codecs=\"hvc1,mp4a.40.2\"".to_string()),
+                    mimetype: Some(mimetype.to_string()),
                 }))
             }
             OutputMode::Hls => {
@@ -162,7 +171,11 @@ impl JobHandler {
                 } else {
                     "360p, 720p, 1080p"
                 };
-                let status_msg = format!("Transcoding to HLS ({})", resolution_list);
+                let codec_name = match job.codec {
+                    Codec::H264 => "H.264",
+                    Codec::H265 => "H.265",
+                };
+                let status_msg = format!("Transcoding to {} HLS ({})", codec_name, resolution_list);
                 self.send_status(job, JobStatus::Processing, Some(&format!("{}...", status_msg))).await?;
 
                 // Estimate: HLS with encoded streams + 1 copy
@@ -172,7 +185,7 @@ impl JobHandler {
 
                 // Transform with periodic progress updates
                 let (result, _transform_config) = self
-                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform(input_url, input_height))
+                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform(input_url, input_height, job.codec))
                     .await?;
 
                 let total_files = result.segment_paths.len() + result.stream_playlists.len() + 1;

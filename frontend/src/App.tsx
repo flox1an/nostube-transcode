@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import type { Event } from "nostr-tools";
 import { LoginButton } from "./components/LoginButton";
 import { DvmSelector } from "./components/DvmSelector";
-import { VideoForm, type OutputMode, type Resolution } from "./components/VideoForm";
+import { VideoForm, type OutputMode, type Resolution, type Codec } from "./components/VideoForm";
 import { SelfTest } from "./components/SelfTest";
 import { JobProgress, type StatusMessage } from "./components/JobProgress";
 import { VideoPlayer } from "./components/VideoPlayer";
@@ -66,7 +66,7 @@ function App() {
     setResponseEvent(null);
   }, []);
 
-  const handleSubmit = useCallback(async (videoUrl: string, mode: OutputMode, resolution: Resolution) => {
+  const handleSubmit = useCallback(async (videoUrl: string, mode: OutputMode, resolution: Resolution, codec: Codec) => {
     if (!selectedDvm) {
       setErrorMessage("Please select a DVM first");
       return;
@@ -92,7 +92,8 @@ function App() {
         selectedDvm.pubkey,
         selectedDvm.relays,
         mode,
-        resolution
+        resolution,
+        codec
       );
       setRequestEvent(signedEvent);
       setAppState("processing");

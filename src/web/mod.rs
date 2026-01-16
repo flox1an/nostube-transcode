@@ -15,7 +15,7 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use crate::dvm::events::Resolution;
+use crate::dvm::events::{Codec, Resolution};
 use crate::video::{VideoMetadata, VideoProcessor};
 use crate::Config;
 use assets::Assets;
@@ -105,7 +105,7 @@ async fn selftest_handler(State(config): State<Arc<Config>>) -> impl IntoRespons
     // Time the encoding
     let start = Instant::now();
 
-    let result = match processor.transform_mp4(TEST_VIDEO_URL, resolution, Some(23)).await {
+    let result = match processor.transform_mp4(TEST_VIDEO_URL, resolution, Some(23), Codec::default()).await {
         Ok(result) => result,
         Err(e) => {
             error!("Self-test encoding failed: {}", e);

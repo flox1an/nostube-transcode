@@ -3,7 +3,7 @@ use std::process::Command;
 use tokio::process::Command as TokioCommand;
 use tracing::debug;
 
-use crate::dvm::events::Resolution;
+use crate::dvm::events::{Codec, Resolution};
 use crate::error::VideoError;
 use crate::video::hwaccel::HwAccel;
 use crate::video::transform::TransformConfig;
@@ -15,15 +15,17 @@ pub struct FfmpegCommand {
     output_dir: std::path::PathBuf,
     config: TransformConfig,
     hwaccel: HwAccel,
+    codec: Codec,
 }
 
 impl FfmpegCommand {
-    pub fn new(input: &str, output_dir: &Path, config: TransformConfig, hwaccel: HwAccel) -> Self {
+    pub fn new(input: &str, output_dir: &Path, config: TransformConfig, hwaccel: HwAccel, codec: Codec) -> Self {
         Self {
             input: input.to_string(),
             output_dir: output_dir.to_path_buf(),
             config,
             hwaccel,
+            codec,
         }
     }
 
@@ -279,7 +281,7 @@ impl FfmpegCommand {
         let mut keys: Vec<_> = self.config.resolutions.keys().collect();
         keys.sort(); // Consistent ordering
 
-        let encoder = self.hwaccel.video_encoder();
+        let encoder = self.hwaccel.video_encoder(self.codec);
 
         for (idx, key) in keys.iter().enumerate() {
             let res = &self.config.resolutions[*key];
@@ -293,14 +295,14 @@ impl FfmpegCommand {
                     .arg("copy");
             } else {
                 // Use hardware encoder if available, or override from config
-                let codec = res.video_codec.as_deref().unwrap_or(encoder);
+                let video_codec = res.video_codec.as_deref().unwrap_or(encoder);
                 cmd.arg("-map")
                     .arg(format!("[{}out]", key))
                     .arg(format!("-c:v:{}", idx))
-                    .arg(codec);
+                    .arg(video_codec);
 
                 // Add hvc1 tag for Safari/iOS compatibility when using H.265
-                if codec.contains("hevc") || codec.contains("265") {
+                if self.codec == Codec::H265 || video_codec.contains("hevc") || video_codec.contains("265") {
                     cmd.arg(format!("-tag:v:{}", idx)).arg("hvc1");
                 }
 
@@ -314,7 +316,7 @@ impl FfmpegCommand {
 
                 // Add encoder-specific options (only for first encoded stream to avoid duplicates)
                 if idx == 0 || !keys.iter().take(idx).any(|k| !self.config.resolutions[*k].is_original) {
-                    for (opt, val) in self.hwaccel.encoder_options() {
+                    for (opt, val) in self.hwaccel.encoder_options(self.codec) {
                         cmd.arg(opt).arg(val);
                     }
                 }
@@ -345,10 +347,11 @@ pub struct FfmpegMp4Command {
     crf: u32,
     audio_bitrate: String,
     hwaccel: HwAccel,
+    codec: Codec,
 }
 
 impl FfmpegMp4Command {
-    pub fn new(input: &str, output_path: PathBuf, resolution: Resolution, hwaccel: HwAccel) -> Self {
+    pub fn new(input: &str, output_path: PathBuf, resolution: Resolution, hwaccel: HwAccel, codec: Codec) -> Self {
         Self {
             input: input.to_string(),
             output_path,
@@ -356,6 +359,7 @@ impl FfmpegMp4Command {
             crf: 23,
             audio_bitrate: "128k".to_string(),
             hwaccel,
+            codec,
         }
     }
 
@@ -397,18 +401,20 @@ impl FfmpegMp4Command {
         cmd.arg("-vf").arg(vf);
 
         // Video codec with hardware acceleration
-        let encoder = self.hwaccel.video_encoder();
+        let encoder = self.hwaccel.video_encoder(self.codec);
         cmd.arg("-c:v").arg(encoder);
 
-        // Add hvc1 tag for Safari/iOS compatibility
-        cmd.arg("-tag:v").arg("hvc1");
+        // Add hvc1 tag for Safari/iOS compatibility (H.265 only)
+        if self.codec == Codec::H265 {
+            cmd.arg("-tag:v").arg("hvc1");
+        }
 
         // Quality parameter
         let (quality_param, quality_value) = self.hwaccel.quality_param(self.crf);
         cmd.arg(quality_param).arg(&quality_value);
 
         // Encoder-specific options
-        for (opt, val) in self.hwaccel.encoder_options() {
+        for (opt, val) in self.hwaccel.encoder_options(self.codec) {
             cmd.arg(opt).arg(val);
         }
 
@@ -488,7 +494,7 @@ mod tests {
     #[test]
     fn test_ffmpeg_command_building() {
         let config = TransformConfig::default();
-        let cmd = FfmpegCommand::new("input.mp4", Path::new("/tmp/output"), config, HwAccel::Software);
+        let cmd = FfmpegCommand::new("input.mp4", Path::new("/tmp/output"), config, HwAccel::Software, Codec::H264);
 
         let built = cmd.build();
         let args: Vec<&OsStr> = built.get_args().collect();
@@ -504,6 +510,7 @@ mod tests {
     fn test_hwaccel_detection() {
         // Just verify detection doesn't panic
         let hwaccel = HwAccel::detect();
-        assert!(!hwaccel.video_encoder().is_empty());
+        assert!(!hwaccel.video_encoder(Codec::H264).is_empty());
+        assert!(!hwaccel.video_encoder(Codec::H265).is_empty());
     }
 }

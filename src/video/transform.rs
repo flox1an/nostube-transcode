@@ -5,7 +5,7 @@ use tokio::fs;
 use tracing::{debug, info};
 
 use crate::config::Config;
-use crate::dvm::events::Resolution;
+use crate::dvm::events::{Codec, Resolution};
 use crate::error::VideoError;
 use crate::util::TempDir;
 use crate::video::ffmpeg::{FfmpegCommand, FfmpegMp4Command};
@@ -250,6 +250,7 @@ impl VideoProcessor {
         &self,
         input_url: &str,
         input_height: Option<u32>,
+        codec: Codec,
     ) -> Result<(TransformResult, TransformConfig), VideoError> {
         let transform_config = TransformConfig::for_resolution(input_height);
 
@@ -257,6 +258,7 @@ impl VideoProcessor {
             url = %input_url,
             resolutions = %transform_config.resolution_label(),
             hwaccel = %self.hwaccel,
+            codec = %codec.as_str(),
             "Starting HLS video transformation"
         );
 
@@ -267,7 +269,7 @@ impl VideoProcessor {
         debug!(path = %output_dir.display(), "Created temp directory");
 
         // Build and run FFmpeg command with hardware acceleration
-        let ffmpeg = FfmpegCommand::new(input_url, output_dir, transform_config.clone(), self.hwaccel);
+        let ffmpeg = FfmpegCommand::new(input_url, output_dir, transform_config.clone(), self.hwaccel, codec);
         ffmpeg.run(&self.config.ffmpeg_path).await?;
 
         info!("FFmpeg HLS processing complete");
@@ -291,11 +293,13 @@ impl VideoProcessor {
         input_url: &str,
         resolution: Resolution,
         quality: Option<u32>,
+        codec: Codec,
     ) -> Result<Mp4TransformResult, VideoError> {
         info!(
             url = %input_url,
             resolution = %resolution.as_str(),
             hwaccel = %self.hwaccel,
+            codec = %codec.as_str(),
             "Starting MP4 video transformation"
         );
 
@@ -309,7 +313,7 @@ impl VideoProcessor {
         let output_path = output_dir.join(format!("output_{}.mp4", resolution.as_str()));
 
         // Build and run FFmpeg command with hardware acceleration
-        let mut ffmpeg = FfmpegMp4Command::new(input_url, output_path.clone(), resolution, self.hwaccel);
+        let mut ffmpeg = FfmpegMp4Command::new(input_url, output_path.clone(), resolution, self.hwaccel, codec);
         if let Some(q) = quality {
             ffmpeg = ffmpeg.with_crf(q);
         }

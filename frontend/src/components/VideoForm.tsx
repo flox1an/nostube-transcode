@@ -2,9 +2,10 @@ import { useState } from "react";
 
 export type OutputMode = "mp4" | "hls";
 export type Resolution = "360p" | "480p" | "720p" | "1080p";
+export type Codec = "h264" | "h265";
 
 interface VideoFormProps {
-  onSubmit: (url: string, mode: OutputMode, resolution: Resolution) => void;
+  onSubmit: (url: string, mode: OutputMode, resolution: Resolution, codec: Codec) => void;
   disabled: boolean;
 }
 
@@ -12,13 +13,14 @@ export function VideoForm({ onSubmit, disabled }: VideoFormProps) {
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<OutputMode>("mp4");
   const [resolution, setResolution] = useState<Resolution>("720p");
+  const [codec, setCodec] = useState<Codec>("h264");
 
   const isValidUrl = url.startsWith("https://");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isValidUrl && !disabled) {
-      onSubmit(url, mode, resolution);
+      onSubmit(url, mode, resolution, codec);
     }
   };
 
@@ -52,6 +54,28 @@ export function VideoForm({ onSubmit, disabled }: VideoFormProps) {
               disabled={disabled}
             >
               HLS
+            </button>
+          </div>
+        </div>
+
+        <div className="codec-toggle">
+          <label className="option-label">Codec:</label>
+          <div className="toggle-buttons">
+            <button
+              type="button"
+              className={`toggle-btn ${codec === "h264" ? "active" : ""}`}
+              onClick={() => setCodec("h264")}
+              disabled={disabled}
+            >
+              H.264
+            </button>
+            <button
+              type="button"
+              className={`toggle-btn ${codec === "h265" ? "active" : ""}`}
+              onClick={() => setCodec("h265")}
+              disabled={disabled}
+            >
+              H.265
             </button>
           </div>
         </div>

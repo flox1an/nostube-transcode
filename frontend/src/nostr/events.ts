@@ -3,6 +3,7 @@ import { KIND_DVM_REQUEST, RELAYS } from "./constants";
 
 export type OutputMode = "mp4" | "hls";
 export type Resolution = "360p" | "480p" | "720p" | "1080p";
+export type Codec = "h264" | "h265";
 
 /** Stream playlist info for HLS output */
 export interface StreamPlaylist {
@@ -41,12 +42,14 @@ export function buildTransformRequest(
   dvmPubkey: string,
   dvmRelays: string[] = RELAYS,
   mode: OutputMode = "mp4",
-  resolution: Resolution = "720p"
+  resolution: Resolution = "720p",
+  codec: Codec = "h264"
 ): EventTemplate {
   const tags: string[][] = [
     ["i", videoUrl, "url"],
     ["p", dvmPubkey],
     ["param", "mode", mode],
+    ["param", "codec", codec],
     ["relays", ...dvmRelays],
   ];
 

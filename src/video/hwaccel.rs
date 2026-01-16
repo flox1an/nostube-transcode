@@ -5,6 +5,8 @@ use std::process::Command;
 use tracing::debug;
 use tracing::info;
 
+use crate::dvm::events::Codec;
+
 /// Hardware acceleration backend
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HwAccel {
@@ -239,14 +241,19 @@ impl HwAccel {
         }
     }
 
-    /// Get the video encoder name for this acceleration
-    pub fn video_encoder(&self) -> &'static str {
-        match self {
-            Self::Nvenc => "hevc_nvenc",
-            Self::Vaapi => "hevc_vaapi",
-            Self::Qsv => "hevc_qsv",
-            Self::VideoToolbox => "hevc_videotoolbox",
-            Self::Software => "libx265",
+    /// Get the video encoder name for this acceleration and codec
+    pub fn video_encoder(&self, codec: Codec) -> &'static str {
+        match (self, codec) {
+            (Self::Nvenc, Codec::H264) => "h264_nvenc",
+            (Self::Nvenc, Codec::H265) => "hevc_nvenc",
+            (Self::Vaapi, Codec::H264) => "h264_vaapi",
+            (Self::Vaapi, Codec::H265) => "hevc_vaapi",
+            (Self::Qsv, Codec::H264) => "h264_qsv",
+            (Self::Qsv, Codec::H265) => "hevc_qsv",
+            (Self::VideoToolbox, Codec::H264) => "h264_videotoolbox",
+            (Self::VideoToolbox, Codec::H265) => "hevc_videotoolbox",
+            (Self::Software, Codec::H264) => "libx264",
+            (Self::Software, Codec::H265) => "libx265",
         }
     }
 
@@ -325,22 +332,22 @@ impl HwAccel {
     }
 
     /// Get additional encoder options
-    pub fn encoder_options(&self) -> Vec<(&'static str, &'static str)> {
-        match self {
-            Self::Nvenc => vec![
+    pub fn encoder_options(&self, codec: Codec) -> Vec<(&'static str, &'static str)> {
+        match (self, codec) {
+            (Self::Nvenc, _) => vec![
                 ("-preset", "p4"),  // balanced preset
                 ("-tune", "hq"),
                 ("-rc", "vbr"),
             ],
-            Self::Vaapi => vec![
+            (Self::Vaapi, _) => vec![
                 // VAAPI doesn't have many options, but we set profile for compatibility
                 ("-profile:v", "main"),
             ],
-            Self::Qsv => vec![
+            (Self::Qsv, _) => vec![
                 ("-preset", "medium"),
             ],
-            Self::VideoToolbox => vec![],
-            Self::Software => vec![
+            (Self::VideoToolbox, _) => vec![],
+            (Self::Software, _) => vec![
                 ("-preset", "medium"),
             ],
         }
@@ -409,12 +416,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_video_encoder() {
-        assert_eq!(HwAccel::Nvenc.video_encoder(), "hevc_nvenc");
-        assert_eq!(HwAccel::Vaapi.video_encoder(), "hevc_vaapi");
-        assert_eq!(HwAccel::Qsv.video_encoder(), "hevc_qsv");
-        assert_eq!(HwAccel::VideoToolbox.video_encoder(), "hevc_videotoolbox");
-        assert_eq!(HwAccel::Software.video_encoder(), "libx265");
+    fn test_video_encoder_h264() {
+        assert_eq!(HwAccel::Nvenc.video_encoder(Codec::H264), "h264_nvenc");
+        assert_eq!(HwAccel::Vaapi.video_encoder(Codec::H264), "h264_vaapi");
+        assert_eq!(HwAccel::Qsv.video_encoder(Codec::H264), "h264_qsv");
+        assert_eq!(HwAccel::VideoToolbox.video_encoder(Codec::H264), "h264_videotoolbox");
+        assert_eq!(HwAccel::Software.video_encoder(Codec::H264), "libx264");
+    }
+
+    #[test]
+    fn test_video_encoder_h265() {
+        assert_eq!(HwAccel::Nvenc.video_encoder(Codec::H265), "hevc_nvenc");
+        assert_eq!(HwAccel::Vaapi.video_encoder(Codec::H265), "hevc_vaapi");
+        assert_eq!(HwAccel::Qsv.video_encoder(Codec::H265), "hevc_qsv");
+        assert_eq!(HwAccel::VideoToolbox.video_encoder(Codec::H265), "hevc_videotoolbox");
+        assert_eq!(HwAccel::Software.video_encoder(Codec::H265), "libx265");
     }
 
     #[test]

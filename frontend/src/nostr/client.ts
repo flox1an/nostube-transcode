@@ -2,7 +2,7 @@ import { SimplePool } from "nostr-tools";
 import type { Event, Filter } from "nostr-tools";
 import { ExtensionSigner } from "applesauce-signers";
 import { KIND_DVM_STATUS, KIND_DVM_RESULT, RELAYS } from "./constants";
-import { buildTransformRequest, type OutputMode, type Resolution } from "./events";
+import { buildTransformRequest, type OutputMode, type Resolution, type Codec } from "./events";
 
 // Singleton pool instance
 let pool: SimplePool | null = null;
@@ -49,14 +49,15 @@ export async function publishTransformRequest(
   dvmPubkey: string,
   dvmRelays: string[] = RELAYS,
   mode: OutputMode = "mp4",
-  resolution: Resolution = "720p"
+  resolution: Resolution = "720p",
+  codec: Codec = "h264"
 ): Promise<PublishResult> {
   if (!hasExtension()) {
     throw new Error("No Nostr extension available");
   }
 
   const signer = new ExtensionSigner();
-  const template = buildTransformRequest(videoUrl, dvmPubkey, dvmRelays, mode, resolution);
+  const template = buildTransformRequest(videoUrl, dvmPubkey, dvmRelays, mode, resolution, codec);
   const signedEvent = await signer.signEvent(template);
 
   const p = getPool();
