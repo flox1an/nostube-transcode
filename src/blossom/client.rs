@@ -155,7 +155,10 @@ impl BlossomClient {
         mime_type: &str,
     ) -> Result<BlobDescriptor, BlossomError> {
         let results = self.upload_file_to_all(path, mime_type).await?;
-        Ok(results.into_iter().next().unwrap())
+        results
+            .into_iter()
+            .next()
+            .ok_or_else(|| BlossomError::UploadFailed("No upload results available".into()))
     }
 
     /// Upload a file to all configured Blossom servers with real-time progress tracking
@@ -382,13 +385,19 @@ impl BlossomClient {
             let filename = segment_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    warn!(path = %segment_path.display(), "Segment path has no valid filename");
+                    ""
+                });
 
             // Track size per stream
-            let file_size = tokio::fs::metadata(segment_path)
-                .await
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let file_size = match tokio::fs::metadata(segment_path).await {
+                Ok(m) => m.len(),
+                Err(e) => {
+                    warn!(path = %segment_path.display(), error = %e, "Failed to get segment file size");
+                    0
+                }
+            };
             total_size += file_size;
 
             // Extract stream index and accumulate size
@@ -422,7 +431,10 @@ impl BlossomClient {
             let original_name = playlist_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    warn!(path = %playlist_path.display(), "Playlist path has no valid filename");
+                    ""
+                });
 
             // Add playlist size to stream total
             *stream_sizes.entry(original_name.to_string()).or_insert(0) += playlist_size;

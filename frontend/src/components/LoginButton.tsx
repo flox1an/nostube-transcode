@@ -1,11 +1,17 @@
-import { hasExtension, login } from "../nostr/client";
+import { useCurrentUser } from "../hooks/useCurrentUser";
 
 interface LoginButtonProps {
-  onLogin: (pubkey: string) => void;
+  onLogin: () => void;
   onError: (error: string) => void;
 }
 
 export function LoginButton({ onLogin, onError }: LoginButtonProps) {
+  const { loginWithExtension } = useCurrentUser();
+
+  const hasExtension = () => {
+    return typeof window !== "undefined" && "nostr" in window;
+  };
+
   const handleClick = async () => {
     if (!hasExtension()) {
       onError("No Nostr extension found. Install Alby or nos2x.");
@@ -13,8 +19,8 @@ export function LoginButton({ onLogin, onError }: LoginButtonProps) {
     }
 
     try {
-      const pubkey = await login();
-      onLogin(pubkey);
+      await loginWithExtension();
+      onLogin();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Login failed");
     }

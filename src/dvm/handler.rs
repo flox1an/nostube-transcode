@@ -125,6 +125,14 @@ impl JobHandler {
                 .await;
         }
 
+        // Validate URL scheme (only allow HTTP/HTTPS for security)
+        let input_url = &job.input.value;
+        if !input_url.starts_with("http://") && !input_url.starts_with("https://") {
+            return self
+                .send_error(&job, "Only HTTP and HTTPS URLs are supported")
+                .await;
+        }
+
         // Process the video
         let result = self.process_video(&job).await;
 

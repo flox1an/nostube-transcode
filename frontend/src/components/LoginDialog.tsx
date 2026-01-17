@@ -1,26 +1,25 @@
 import { useState, useRef } from "react";
 import { nip19 } from "nostr-tools";
-import {
-  loginWithExtension,
-  loginWithNsec,
-  loginWithBunker,
-  hasExtension,
-  type LoginResult,
-} from "../nostr/client";
+import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type LoginMethod = "extension" | "nsec" | "bunker";
 
 interface LoginDialogProps {
-  onLogin: (result: LoginResult) => void;
+  onLogin: () => void;
   onError: (error: string) => void;
 }
 
 export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
+  const { loginWithExtension, loginWithNsec, loginWithBunker } = useCurrentUser();
   const [activeTab, setActiveTab] = useState<LoginMethod>("extension");
   const [isLoading, setIsLoading] = useState(false);
   const [nsec, setNsec] = useState("");
   const [bunkerUri, setBunkerUri] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const hasExtension = () => {
+    return typeof window !== "undefined" && "nostr" in window;
+  };
 
   const handleExtensionLogin = async () => {
     if (!hasExtension()) {
@@ -30,8 +29,8 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
     setIsLoading(true);
     try {
-      const result = await loginWithExtension();
-      onLogin(result);
+      await loginWithExtension();
+      onLogin();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Extension login failed");
     } finally {
@@ -59,9 +58,9 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
     setIsLoading(true);
     try {
-      const result = await loginWithNsec(nsec.trim());
+      await loginWithNsec(nsec.trim());
       setNsec(""); // Clear for security
-      onLogin(result);
+      onLogin();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Nsec login failed");
     } finally {
@@ -82,9 +81,9 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
     setIsLoading(true);
     try {
-      const result = await loginWithBunker(bunkerUri.trim());
+      await loginWithBunker(bunkerUri.trim());
       setBunkerUri("");
-      onLogin(result);
+      onLogin();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Bunker login failed");
     } finally {

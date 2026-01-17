@@ -237,9 +237,24 @@ impl FfmpegCommand {
         parts.push(input_chain);
 
         // Scale filters for non-original resolutions using appropriate hardware filter
+        // Use -2 for width to auto-calculate while preserving aspect ratio (and ensuring even dimensions)
         for (name, res) in &non_original {
-            if let (Some(w), Some(h)) = (res.width, res.height) {
-                parts.push(format!("[{}]{}=w={}:h={}[{}out]", name, scale_filter, w, h, name));
+            match (res.width, res.height) {
+                (Some(w), Some(h)) => {
+                    // Both dimensions specified
+                    parts.push(format!("[{}]{}=w={}:h={}[{}out]", name, scale_filter, w, h, name));
+                }
+                (None, Some(h)) => {
+                    // Only height specified - auto-calculate width to preserve aspect ratio
+                    parts.push(format!("[{}]{}=w=-2:h={}[{}out]", name, scale_filter, h, name));
+                }
+                (Some(w), None) => {
+                    // Only width specified - auto-calculate height to preserve aspect ratio
+                    parts.push(format!("[{}]{}=w={}:h=-2[{}out]", name, scale_filter, w, name));
+                }
+                (None, None) => {
+                    // No dimensions - should not happen for non-original, skip
+                }
             }
         }
 
@@ -409,7 +424,8 @@ impl FfmpegMp4Command {
         cmd.arg("-i").arg(&self.input);
 
         // Scale filter using appropriate hardware filter
-        let (width, height) = self.resolution.dimensions();
+        // Use -2 for width to auto-calculate while preserving aspect ratio (and ensuring even dimensions)
+        let (_width, height) = self.resolution.dimensions();
         let scale_filter = self.hwaccel.scale_filter();
 
         // For QSV, when hwaccel_output_format is not set (to handle software decode fallback),
@@ -417,12 +433,12 @@ impl FfmpegMp4Command {
         // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
         let vf = if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
-                format!("{},{}=w={}:h={}", upload_filter, scale_filter, width, height)
+                format!("{},{}=w=-2:h={}", upload_filter, scale_filter, height)
             } else {
-                format!("{}=w={}:h={}", scale_filter, width, height)
+                format!("{}=w=-2:h={}", scale_filter, height)
             }
         } else {
-            format!("{}=w={}:h={}", scale_filter, width, height)
+            format!("{}=w=-2:h={}", scale_filter, height)
         };
         cmd.arg("-vf").arg(vf);
 

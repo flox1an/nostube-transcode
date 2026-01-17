@@ -132,7 +132,7 @@ impl TransformConfig {
                     resolutions.insert(
                         "240p".to_string(),
                         ResolutionConfig {
-                            width: Some(426),
+                            // Width is auto-calculated to preserve aspect ratio
                             height: Some(240),
                             quality: Some(30),
                             audio_bitrate: Some("64k".to_string()),
@@ -144,7 +144,7 @@ impl TransformConfig {
                     resolutions.insert(
                         "360p".to_string(),
                         ResolutionConfig {
-                            width: Some(640),
+                            // Width is auto-calculated to preserve aspect ratio
                             height: Some(360),
                             quality: Some(28),
                             audio_bitrate: Some("96k".to_string()),
@@ -156,7 +156,7 @@ impl TransformConfig {
                     resolutions.insert(
                         "480p".to_string(),
                         ResolutionConfig {
-                            width: Some(854),
+                            // Width is auto-calculated to preserve aspect ratio
                             height: Some(480),
                             quality: Some(26),
                             audio_bitrate: Some("128k".to_string()),
@@ -168,7 +168,7 @@ impl TransformConfig {
                     resolutions.insert(
                         "720p".to_string(),
                         ResolutionConfig {
-                            width: Some(1280),
+                            // Width is auto-calculated to preserve aspect ratio
                             height: Some(720),
                             quality: Some(23),
                             ..Default::default()
@@ -182,7 +182,7 @@ impl TransformConfig {
                         resolutions.insert(
                             "1080p".to_string(),
                             ResolutionConfig {
-                                width: Some(1920),
+                                // Width is auto-calculated to preserve aspect ratio
                                 height: Some(1080),
                                 quality: Some(20),
                                 ..Default::default()
@@ -197,8 +197,7 @@ impl TransformConfig {
                         label.to_string(),
                         ResolutionConfig {
                             is_original: can_passthrough,
-                            // If can't passthrough, set dimensions for re-encoding
-                            width: if can_passthrough { None } else { Some(if is_4k { 3840 } else { 1920 }) },
+                            // If can't passthrough, set height for re-encoding (width auto-calculated)
                             height: if can_passthrough { None } else { Some(input_h) },
                             quality: if can_passthrough { None } else { Some(18) },
                             ..Default::default()
@@ -536,7 +535,8 @@ mod tests {
         // 1080p should be encoded (not original) for 4K input
         let r1080 = config.resolutions.get("1080p").unwrap();
         assert!(!r1080.is_original);
-        assert_eq!(r1080.width, Some(1920));
+        // Width is auto-calculated to preserve aspect ratio
+        assert_eq!(r1080.width, None);
         assert_eq!(r1080.height, Some(1080));
 
         // 2160p should be original
@@ -589,7 +589,7 @@ mod tests {
         // 1080p should NOT be original (needs re-encode) since vp9 is not HLS-compatible
         let r1080 = config.resolutions.get("1080p").unwrap();
         assert!(!r1080.is_original);
-        assert!(r1080.width.is_some()); // Has dimensions for re-encoding
+        assert!(r1080.height.is_some()); // Has height for re-encoding (width auto-calculated)
     }
 
     #[test]

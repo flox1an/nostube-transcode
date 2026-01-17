@@ -243,7 +243,19 @@ fn get_disk_info(path: &std::path::Path) -> DiskInfo {
 
     #[cfg(unix)]
     {
-        let c_path = CString::new(path_str.as_bytes()).unwrap();
+        // Handle potential null bytes in path (unlikely but possible)
+        let c_path = match CString::new(path_str.as_bytes()) {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(path = %path_str, "Path contains null bytes, cannot get disk info");
+                return DiskInfo {
+                    path: path_str,
+                    free_bytes: 0,
+                    total_bytes: 0,
+                    free_percent: 0.0,
+                };
+            }
+        };
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         let result = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
 
@@ -456,7 +468,13 @@ fn serve_file(path: &str) -> Response<Body> {
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime.as_ref())
                 .body(Body::from(content.data.to_vec()))
-                .unwrap()
+                .unwrap_or_else(|e| {
+                    error!(error = %e, "Failed to build response");
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from("Internal Server Error"))
+                        .expect("fallback response must build")
+                })
         }
         None => {
             // For SPA routing: serve index.html for unknown paths
@@ -465,11 +483,17 @@ fn serve_file(path: &str) -> Response<Body> {
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")
                     .body(Body::from(content.data.to_vec()))
-                    .unwrap(),
+                    .unwrap_or_else(|e| {
+                        error!(error = %e, "Failed to build index response");
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::from("Internal Server Error"))
+                            .expect("fallback response must build")
+                    }),
                 None => Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .body(Body::from("Not Found"))
-                    .unwrap(),
+                    .expect("not found response must build"),
             }
         }
     }

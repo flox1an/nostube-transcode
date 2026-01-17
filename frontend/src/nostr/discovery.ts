@@ -1,5 +1,5 @@
 import type { Event, Filter } from "nostr-tools";
-import { getPool } from "./client";
+import { relayPool } from "./core";
 import { RELAYS, KIND_DVM_ANNOUNCEMENT, KIND_DVM_REQUEST, DVM_SERVICE_ID } from "./constants";
 
 /**
@@ -62,8 +62,6 @@ function parseAnnouncementEvent(event: Event): DvmService | null {
 export async function discoverDvms(
   timeoutMs: number = 5000
 ): Promise<DvmService[]> {
-  const pool = getPool();
-
   const filter: Filter = {
     kinds: [KIND_DVM_ANNOUNCEMENT],
     "#d": [DVM_SERVICE_ID],
@@ -75,8 +73,23 @@ export async function discoverDvms(
     let resolved = false;
     const oneHourAgo = Math.floor(Date.now() / 1000) - 3600;
 
-    const sub = pool.subscribeMany(RELAYS, filter, {
-      onevent(event: Event) {
+    const subscription = relayPool.subscription(RELAYS, filter).subscribe({
+      next(response) {
+        if (typeof response === 'string') {
+          // EOSE signal
+          if (!resolved) {
+            resolved = true;
+            subscription.unsubscribe();
+            const result = Array.from(dvms.values()).sort(
+              (a, b) => b.lastSeen - a.lastSeen
+            );
+            resolve(result);
+          }
+          return;
+        }
+
+        // Event
+        const event = response as Event;
         // Ignore announcements older than 1 hour
         if (event.created_at < oneHourAgo) {
           return;
@@ -90,24 +103,13 @@ export async function discoverDvms(
           }
         }
       },
-      oneose() {
-        if (!resolved) {
-          resolved = true;
-          sub.close();
-          // Sort by lastSeen descending (newest first)
-          const result = Array.from(dvms.values()).sort(
-            (a, b) => b.lastSeen - a.lastSeen
-          );
-          resolve(result);
-        }
-      },
     });
 
     // Timeout fallback
     setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        sub.close();
+        subscription.unsubscribe();
         const result = Array.from(dvms.values()).sort(
           (a, b) => b.lastSeen - a.lastSeen
         );

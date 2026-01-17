@@ -7,9 +7,10 @@ import { SelfTest } from "./components/SelfTest";
 import { JobProgress, type StatusMessage } from "./components/JobProgress";
 import { VideoPlayer } from "./components/VideoPlayer";
 import { EventDisplay } from "./components/EventDisplay";
-import { publishTransformRequest, subscribeToResponses, logout as logoutClient, getCurrentSigner, type LoginResult, type LoginMethod } from "./nostr/client";
+import { publishTransformRequest, subscribeToResponses, getCurrentSigner } from "./nostr/client";
 import { parseStatusEvent, parseResultEvent, type DvmResult } from "./nostr/events";
 import type { DvmService } from "./nostr/discovery";
+import { useCurrentUser } from "./hooks/useCurrentUser";
 import "./App.css";
 
 type AppState = "idle" | "submitting" | "processing" | "complete" | "error";
@@ -27,8 +28,7 @@ function formatBytes(bytes: number): string {
 }
 
 function App() {
-  const [pubkey, setPubkey] = useState<string | null>(null);
-  const [loginMethod, setLoginMethod] = useState<LoginMethod | null>(null);
+  const { user, isLoggedIn, logout } = useCurrentUser();
   const [selectedDvm, setSelectedDvm] = useState<DvmService | null>(null);
   const [appState, setAppState] = useState<AppState>("idle");
   const [statusMessages, setStatusMessages] = useState<StatusMessage[]>([]);
@@ -44,9 +44,7 @@ function App() {
     setSelectedDvm(dvm);
   }, []);
 
-  const handleLogin = useCallback((result: LoginResult) => {
-    setPubkey(result.pubkey);
-    setLoginMethod(result.method);
+  const handleLogin = useCallback(() => {
     setErrorMessage(null);
   }, []);
 
@@ -60,16 +58,14 @@ function App() {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
     }
-    logoutClient();
-    setPubkey(null);
-    setLoginMethod(null);
+    logout();
     setAppState("idle");
     setStatusMessages([]);
     setErrorMessage(null);
     setDvmResult(null);
     setRequestEvent(null);
     setResponseEvent(null);
-  }, []);
+  }, [logout]);
 
   const handleSubmit = useCallback(async (videoUrl: string, mode: OutputMode, resolution: Resolution, codec: Codec, hlsResolutions?: HlsResolution[], encryption?: boolean) => {
     if (!selectedDvm) {
@@ -183,7 +179,7 @@ function App() {
   }, []);
 
   // Not logged in - show login screen
-  if (!pubkey) {
+  if (!isLoggedIn || !user) {
     return (
       <div className="app">
         <div className="login-screen">
@@ -203,8 +199,7 @@ function App() {
       <header className="app-header">
         <h1>DVM Video Processor</h1>
         <div className="user-info">
-          <span className="pubkey">{truncatePubkey(pubkey)}</span>
-          {loginMethod && <span className="login-method">via {loginMethod}</span>}
+          <span className="pubkey">{truncatePubkey(user.pubkey)}</span>
           <button className="logout-button" onClick={handleLogout}>
             Logout
           </button>
