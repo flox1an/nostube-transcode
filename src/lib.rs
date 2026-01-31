@@ -7,6 +7,7 @@ pub mod blossom;
 pub mod config;
 pub mod dvm;
 pub mod error;
+pub mod identity;
 pub mod nostr;
 pub mod util;
 pub mod video;
