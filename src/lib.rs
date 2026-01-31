@@ -8,6 +8,7 @@ pub mod blossom;
 pub mod bootstrap;
 pub mod config;
 pub mod dvm;
+pub mod dvm_state;
 pub mod error;
 pub mod identity;
 pub mod nostr;
