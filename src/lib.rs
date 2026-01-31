@@ -4,6 +4,7 @@
 //! and uploads them to Blossom servers.
 
 pub mod blossom;
+pub mod bootstrap;
 pub mod config;
 pub mod dvm;
 pub mod error;
