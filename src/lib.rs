@@ -14,6 +14,7 @@ pub mod identity;
 pub mod nostr;
 pub mod pairing;
 pub mod remote_config;
+pub mod startup;
 pub mod util;
 pub mod video;
 pub mod web;
