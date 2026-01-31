@@ -9,6 +9,7 @@ pub mod dvm;
 pub mod error;
 pub mod identity;
 pub mod nostr;
+pub mod remote_config;
 pub mod util;
 pub mod video;
 pub mod web;
