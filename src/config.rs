@@ -4,6 +4,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::error::ConfigError;
+use crate::remote_config::RemoteConfig;
 use crate::util::FfmpegPaths;
 
 #[derive(Debug, Clone)]
@@ -30,8 +31,8 @@ impl Config {
         let private_key = std::env::var("NOSTR_PRIVATE_KEY")
             .map_err(|_| ConfigError::Missing("NOSTR_PRIVATE_KEY"))?;
 
-        let nostr_keys = Keys::parse(&private_key)
-            .map_err(|e| ConfigError::InvalidKey(e.to_string()))?;
+        let nostr_keys =
+            Keys::parse(&private_key).map_err(|e| ConfigError::InvalidKey(e.to_string()))?;
 
         let nostr_relays = std::env::var("NOSTR_RELAYS")
             .map_err(|_| ConfigError::Missing("NOSTR_RELAYS"))?
@@ -84,6 +85,48 @@ impl Config {
             http_port,
             dvm_name,
             dvm_about,
+        })
+    }
+
+    /// Create Config from RemoteConfig (for remote-configured mode)
+    pub fn from_remote(
+        keys: Keys,
+        remote: &RemoteConfig,
+        ffmpeg_path: PathBuf,
+        ffprobe_path: PathBuf,
+    ) -> Result<Self, ConfigError> {
+        let relays: Vec<Url> = remote
+            .relays
+            .iter()
+            .filter_map(|s| Url::parse(s).ok())
+            .collect();
+
+        let blossom: Vec<Url> = remote
+            .blossom_servers
+            .iter()
+            .filter_map(|s| Url::parse(s).ok())
+            .collect();
+
+        let temp_dir = std::env::var("TEMP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("./temp"));
+
+        let http_port = std::env::var("HTTP_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3000);
+
+        Ok(Self {
+            nostr_keys: keys,
+            nostr_relays: relays,
+            blossom_servers: blossom,
+            blob_expiration_days: remote.blob_expiration_days,
+            temp_dir,
+            ffmpeg_path,
+            ffprobe_path,
+            http_port,
+            dvm_name: remote.name.clone(),
+            dvm_about: remote.about.clone(),
         })
     }
 }
