@@ -25,6 +25,10 @@ base64 = "0.22"
 
 # Environment & config
 dotenvy = "0.15"
+dirs = "5.0"
+
+# QR code generation
+qrcode = "0.14"
 
 # Logging
 tracing = "0.1"
