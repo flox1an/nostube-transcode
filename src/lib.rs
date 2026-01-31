@@ -3,6 +3,7 @@
 //! A Data Vending Machine (DVM) that transforms videos into HLS format
 //! and uploads them to Blossom servers.
 
+pub mod admin;
 pub mod blossom;
 pub mod bootstrap;
 pub mod config;
