@@ -1,0 +1,465 @@
+/* frontend/src/components/DvmDetailPanel.css */
+.dvm-detail-panel {
+  max-width: 900px;
+}
+
+.dvm-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.header-left h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+}
+
+.npub {
+  font-size: 0.75rem;
+  color: #888;
+  background: #1a1a1a;
+  padding: 0.375rem 0.625rem;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.status-badge {
+  padding: 0.375rem 0.875rem;
+  border-radius: 12px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.status-badge.active {
+  background: rgba(52, 211, 153, 0.2);
+  color: #34d399;
+}
+
+.status-badge.paused {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.action-btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: #444;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Public DVM Info */
+.public-dvm-info {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.public-dvm-info .dvm-about {
+  color: #ccc;
+  margin-bottom: 1rem;
+}
+
+.public-dvm-info p {
+  margin: 0.5rem 0;
+  color: #888;
+}
+
+.not-owned-notice {
+  margin-top: 1.5rem !important;
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+  color: #666 !important;
+  font-style: italic;
+}
+
+/* Tabs */
+.detail-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid #333;
+  margin-bottom: 1.5rem;
+}
+
+.detail-tabs button {
+  padding: 0.75rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: transparent;
+  color: #888;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.detail-tabs button:hover {
+  color: white;
+}
+
+.detail-tabs button.active {
+  color: white;
+  border-bottom-color: #6366f1;
+}
+
+/* Loading */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3rem;
+  color: #888;
+  gap: 1rem;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #333;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Stats Grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.stat-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.75rem;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.stat-card .stat-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+/* Info Section */
+.info-section {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.info-section h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  color: #888;
+}
+
+.info-section p {
+  margin: 0;
+}
+
+/* Recent Jobs */
+.recent-jobs {
+  margin-top: 1.5rem;
+}
+
+.recent-jobs h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.jobs-table th,
+.jobs-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #333;
+}
+
+.jobs-table th {
+  color: #888;
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  background: #111;
+}
+
+.jobs-table td {
+  font-size: 0.875rem;
+}
+
+.jobs-table .truncate {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-status {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.job-status.completed {
+  background: rgba(52, 211, 153, 0.2);
+  color: #34d399;
+}
+
+.job-status.failed {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+.job-status.processing {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+/* Config Tab */
+.config-section {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.config-section h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.875rem;
+  color: #888;
+}
+
+.config-section p {
+  margin: 0.375rem 0;
+}
+
+.config-section .list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.config-section .list li {
+  margin: 0.25rem 0;
+  font-family: monospace;
+  font-size: 0.875rem;
+  color: #ccc;
+}
+
+.edit-btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 0.9375rem;
+  background: #6366f1;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.edit-btn:hover {
+  background: #4f46e5;
+}
+
+/* Config Form */
+.config-form {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1.25rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  color: #888;
+}
+
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 0.9375rem;
+  background: #0d0d0d;
+  color: white;
+  border: 1px solid #333;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.form-group textarea {
+  min-height: 100px;
+  resize: vertical;
+  font-family: monospace;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.save-btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 0.9375rem;
+  background: #6366f1;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 0.9375rem;
+  background: transparent;
+  color: #888;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cancel-btn:hover:not(:disabled) {
+  color: white;
+  border-color: #666;
+}
+
+/* Transcode Tab */
+.transcode-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.transcode-tab h3 {
+  margin: 0;
+}
+
+.tab-description {
+  color: #888;
+  margin: 0;
+}
+
+.reset-button {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  background: transparent;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  align-self: flex-start;
+}
+
+.reset-button:hover {
+  border-color: #666;
+  background: #1a1a1a;
+}
+
+.mp4-player {
+  width: 100%;
+  max-height: 400px;
+  background: #000;
+  border-radius: 8px;
+}
+
+.result-details {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.result-details h3 {
+  margin: 0 0 1rem 0;
+}
+
+.stream-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.stream-table th,
+.stream-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #333;
+}
+
+.stream-table th {
+  color: #888;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.stream-table a {
+  color: #6366f1;
+}
+
+/* System Tab */
+.system-tab {
+  max-width: 600px;
+}
