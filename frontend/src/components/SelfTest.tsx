@@ -1,3 +1,4 @@
+import "./SelfTest.css";
 import { useState, useEffect } from "react";
 
 interface SelfTestResult {

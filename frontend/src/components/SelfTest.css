@@ -1,0 +1,270 @@
+/* frontend/src/components/SelfTest.css */
+.selftest-container {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.selftest-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.selftest-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #888;
+}
+
+.selftest-button {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #333;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.selftest-button:hover:not(:disabled) {
+  background: #444;
+  border-color: #555;
+}
+
+.selftest-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.selftest-running {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 0;
+  color: #888;
+}
+
+.selftest-running p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #333;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.selftest-result {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.selftest-result.success {
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.selftest-result.failure {
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.result-header {
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.result-badge {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.result-badge.success {
+  color: #34d399;
+}
+
+.result-badge.failure {
+  color: #f87171;
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.result-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.result-label {
+  font-size: 0.75rem;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.result-value {
+  font-size: 0.9rem;
+  color: #ccc;
+}
+
+.result-value.highlight {
+  color: #34d399;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.error-message {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  margin: 0;
+}
+
+/* System Info Section */
+.system-info-section {
+  margin-bottom: 1.5rem;
+}
+
+.system-info-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  color: #888;
+}
+
+.system-info-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #888;
+  font-size: 0.875rem;
+}
+
+.system-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.system-info-card {
+  background: #222;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.system-info-card h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.75rem;
+  color: #666;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.system-info-card .info-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.system-info-card .info-value {
+  font-size: 0.9rem;
+  color: #eee;
+  font-weight: 500;
+}
+
+.system-info-card .info-value.error {
+  color: #f87171;
+}
+
+.system-info-card .info-value.ffmpeg-version {
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+.system-info-card .info-detail {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.system-info-card .info-detail.path {
+  font-family: monospace;
+  word-break: break-all;
+  color: #666;
+}
+
+/* Disk space warnings */
+.system-info-card.warning {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.system-info-card.critical {
+  border-color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+/* Hardware encoder list */
+.encoder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.encoder-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.375rem 0.5rem;
+  background: #1a1a1a;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+
+.encoder-item.selected {
+  border-color: #34d399;
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.encoder-name {
+  font-size: 0.8rem;
+  color: #ccc;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.selected-badge {
+  color: #34d399;
+  font-size: 0.6rem;
+}
+
+.encoder-codecs {
+  font-size: 0.7rem;
+  color: #666;
+}
+
+/* Selftest section spacing */
+.selftest-section {
+  margin-top: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+}
