@@ -100,10 +100,7 @@ impl HwAccel {
     #[cfg(target_os = "linux")]
     fn is_nvidia_available() -> bool {
         // Check for NVIDIA device
-        let nvidia_devices = [
-            "/dev/nvidia0",
-            "/dev/nvidiactl",
-        ];
+        let nvidia_devices = ["/dev/nvidia0", "/dev/nvidiactl"];
 
         for device in &nvidia_devices {
             if Path::new(device).exists() {
@@ -186,9 +183,7 @@ impl HwAccel {
         // First check for render device
         let render_devices = ["/dev/dri/renderD128", "/dev/dri/renderD129"];
 
-        let device = render_devices
-            .iter()
-            .find(|d| Path::new(*d).exists());
+        let device = render_devices.iter().find(|d| Path::new(*d).exists());
 
         let Some(device) = device else {
             debug!("No render device found, QSV unavailable");
@@ -364,9 +359,7 @@ impl HwAccel {
                 let q = 100 - (crf * 2).min(80);
                 ("-q:v", q.to_string())
             }
-            Self::Software => {
-                ("-crf", crf.to_string())
-            }
+            Self::Software => ("-crf", crf.to_string()),
         }
     }
 
@@ -374,7 +367,7 @@ impl HwAccel {
     pub fn encoder_options(&self, codec: Codec) -> Vec<(&'static str, &'static str)> {
         match (self, codec) {
             (Self::Nvenc, _) => vec![
-                ("-preset", "p4"),  // balanced preset
+                ("-preset", "p4"), // balanced preset
                 ("-tune", "hq"),
                 ("-rc", "vbr"),
             ],
@@ -382,13 +375,9 @@ impl HwAccel {
                 // VAAPI doesn't have many options, but we set profile for compatibility
                 ("-profile:v", "main"),
             ],
-            (Self::Qsv, _) => vec![
-                ("-preset", "medium"),
-            ],
+            (Self::Qsv, _) => vec![("-preset", "medium")],
             (Self::VideoToolbox, _) => vec![],
-            (Self::Software, _) => vec![
-                ("-preset", "medium"),
-            ],
+            (Self::Software, _) => vec![("-preset", "medium")],
         }
     }
 
@@ -459,7 +448,10 @@ mod tests {
         assert_eq!(HwAccel::Nvenc.video_encoder(Codec::H264), "h264_nvenc");
         assert_eq!(HwAccel::Vaapi.video_encoder(Codec::H264), "h264_vaapi");
         assert_eq!(HwAccel::Qsv.video_encoder(Codec::H264), "h264_qsv");
-        assert_eq!(HwAccel::VideoToolbox.video_encoder(Codec::H264), "h264_videotoolbox");
+        assert_eq!(
+            HwAccel::VideoToolbox.video_encoder(Codec::H264),
+            "h264_videotoolbox"
+        );
         assert_eq!(HwAccel::Software.video_encoder(Codec::H264), "libx264");
     }
 
@@ -468,7 +460,10 @@ mod tests {
         assert_eq!(HwAccel::Nvenc.video_encoder(Codec::H265), "hevc_nvenc");
         assert_eq!(HwAccel::Vaapi.video_encoder(Codec::H265), "hevc_vaapi");
         assert_eq!(HwAccel::Qsv.video_encoder(Codec::H265), "hevc_qsv");
-        assert_eq!(HwAccel::VideoToolbox.video_encoder(Codec::H265), "hevc_videotoolbox");
+        assert_eq!(
+            HwAccel::VideoToolbox.video_encoder(Codec::H265),
+            "hevc_videotoolbox"
+        );
         assert_eq!(HwAccel::Software.video_encoder(Codec::H265), "libx265");
     }
 

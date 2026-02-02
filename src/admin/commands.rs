@@ -38,6 +38,8 @@ pub enum AdminCommand {
     },
     /// Run self-test (encode a short video)
     SelfTest,
+    /// Get system information (hardware, GPU, disk, FFmpeg)
+    SystemInfo,
     /// Import configuration from environment variables
     ImportEnvConfig,
 }
@@ -116,6 +118,8 @@ pub enum ResponseData {
     JobHistory(JobHistoryResponse),
     /// Self-test results
     SelfTest(SelfTestResponse),
+    /// System information
+    SystemInfo(SystemInfoResponse),
 }
 
 /// Configuration response data.
@@ -206,15 +210,89 @@ pub struct SelfTestResponse {
     /// Speed ratio (video duration / encode time)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed_ratio: Option<f64>,
+    /// Human-readable speed description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_description: Option<String>,
     /// Hardware acceleration used
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hwaccel: Option<String>,
     /// Resolution tested
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
+    /// Output file size in bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_size_bytes: Option<u64>,
     /// Error message if test failed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// System information response data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SystemInfoResponse {
+    /// Platform (macos, linux, windows)
+    pub platform: String,
+    /// Architecture (x86_64, aarch64, etc.)
+    pub arch: String,
+    /// Available hardware encoders
+    pub hw_encoders: Vec<HwEncoderInfo>,
+    /// GPU information (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<GpuInfo>,
+    /// Disk space information
+    pub disk: DiskInfo,
+    /// FFmpeg information
+    pub ffmpeg: FfmpegInfo,
+    /// Temp directory path
+    pub temp_dir: String,
+}
+
+/// Hardware encoder info.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HwEncoderInfo {
+    /// Encoder name (e.g., "NVIDIA NVENC")
+    pub name: String,
+    /// Whether this is the currently selected encoder
+    pub selected: bool,
+    /// Supported codecs
+    pub codecs: Vec<String>,
+}
+
+/// GPU information.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GpuInfo {
+    /// GPU name/model
+    pub name: String,
+    /// GPU vendor
+    pub vendor: String,
+    /// Additional details (driver version, VRAM, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
+/// Disk space information.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiskInfo {
+    /// Path being checked
+    pub path: String,
+    /// Free space in bytes
+    pub free_bytes: u64,
+    /// Total space in bytes
+    pub total_bytes: u64,
+    /// Free space as percentage
+    pub free_percent: f64,
+}
+
+/// FFmpeg information.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FfmpegInfo {
+    /// Path to FFmpeg binary
+    pub path: String,
+    /// FFmpeg version string
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Path to FFprobe binary
+    pub ffprobe_path: String,
 }
 
 /// Parse an admin command from JSON.

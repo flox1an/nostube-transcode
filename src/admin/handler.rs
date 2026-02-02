@@ -4,12 +4,23 @@
 //! validates authorization, and updates DVM state.
 
 use crate::admin::commands::*;
+use crate::config::Config;
+use crate::dvm::events::{Codec, Resolution};
 use crate::dvm_state::SharedDvmState;
 use crate::pairing::PairingState;
 use crate::remote_config::save_config;
+use crate::video::hwaccel::HwAccel;
+use crate::video::{VideoMetadata, VideoProcessor};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
+use tracing::{error, info};
+
+/// Test video URL for self-test
+const TEST_VIDEO_URL: &str =
+    "https://almond.slidestr.net/ecf8f3a25b4a6109c5aa6ea90ee97f8cafec09f99a2f71f0e6253c3bdf26ccea";
 
 /// Handles admin commands for the DVM.
 pub struct AdminHandler {
@@ -19,6 +30,8 @@ pub struct AdminHandler {
     client: Client,
     /// Active pairing state (if pairing is in progress)
     pairing: Arc<RwLock<Option<PairingState>>>,
+    /// Runtime configuration (ffmpeg paths, temp dir, etc.)
+    config: Arc<Config>,
 }
 
 impl AdminHandler {
@@ -27,11 +40,13 @@ impl AdminHandler {
         state: SharedDvmState,
         client: Client,
         pairing: Arc<RwLock<Option<PairingState>>>,
+        config: Arc<Config>,
     ) -> Self {
         Self {
             state,
             client,
             pairing,
+            config,
         }
     }
 
@@ -73,6 +88,7 @@ impl AdminHandler {
             AdminCommand::Status => self.handle_status().await,
             AdminCommand::JobHistory { limit } => self.handle_job_history(limit).await,
             AdminCommand::SelfTest => self.handle_self_test().await,
+            AdminCommand::SystemInfo => self.handle_system_info().await,
             AdminCommand::ImportEnvConfig => self.handle_import_env_config().await,
         }
     }
@@ -305,20 +321,152 @@ impl AdminHandler {
 
     /// Handles the SelfTest command.
     ///
-    /// This is a placeholder - full implementation would encode a test video.
+    /// Encodes a short test video and returns performance metrics.
     async fn handle_self_test(&self) -> AdminResponse {
-        // TODO: Implement actual self-test with video encoding
-        // For now, return a placeholder response
-        let state = self.state.read().await;
+        info!("Starting self-test with video: {}", TEST_VIDEO_URL);
+
+        let resolution = Resolution::R720p;
+
+        // Get video metadata to determine duration
+        let metadata = match VideoMetadata::extract(TEST_VIDEO_URL, &self.config.ffprobe_path).await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to extract metadata: {}", e);
+                return AdminResponse::ok_with_data(ResponseData::SelfTest(SelfTestResponse {
+                    success: false,
+                    video_duration_secs: None,
+                    encode_time_secs: None,
+                    speed_ratio: None,
+                    speed_description: None,
+                    hwaccel: None,
+                    resolution: Some(resolution.as_str().to_string()),
+                    output_size_bytes: None,
+                    error: Some(format!("Failed to extract metadata: {}", e)),
+                }));
+            }
+        };
+
+        let video_duration = metadata.duration_secs().unwrap_or(0.0);
+        info!(duration_secs = video_duration, "Video metadata extracted");
+
+        // Create video processor
+        let processor = VideoProcessor::new(self.config.clone());
+        let hwaccel = processor.hwaccel();
+
+        // Time the encoding
+        let start = Instant::now();
+
+        let result = match processor
+            .transform_mp4(TEST_VIDEO_URL, resolution, Some(23), Codec::default())
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Self-test encoding failed: {}", e);
+                return AdminResponse::ok_with_data(ResponseData::SelfTest(SelfTestResponse {
+                    success: false,
+                    video_duration_secs: Some(video_duration),
+                    encode_time_secs: Some(start.elapsed().as_secs_f64()),
+                    speed_ratio: None,
+                    speed_description: None,
+                    hwaccel: Some(hwaccel.to_string()),
+                    resolution: Some(resolution.as_str().to_string()),
+                    output_size_bytes: None,
+                    error: Some(format!("Encoding failed: {}", e)),
+                }));
+            }
+        };
+
+        let encode_time = start.elapsed().as_secs_f64();
+        let speed_ratio = if encode_time > 0.0 {
+            video_duration / encode_time
+        } else {
+            0.0
+        };
+
+        let speed_description = if speed_ratio >= 1.0 {
+            format!("{:.1}x realtime (faster than realtime)", speed_ratio)
+        } else if speed_ratio > 0.0 {
+            format!("{:.1}x realtime (slower than realtime)", speed_ratio)
+        } else {
+            "N/A".to_string()
+        };
+
+        // Get output file size
+        let output_size_bytes = tokio::fs::metadata(&result.output_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        info!(
+            encode_time_secs = encode_time,
+            speed_ratio = speed_ratio,
+            output_size_bytes = output_size_bytes,
+            hwaccel = %hwaccel,
+            "Self-test complete"
+        );
+
+        // Cleanup temp files
+        result.cleanup().await;
 
         AdminResponse::ok_with_data(ResponseData::SelfTest(SelfTestResponse {
             success: true,
-            video_duration_secs: None,
-            encode_time_secs: None,
-            speed_ratio: None,
-            hwaccel: state.hwaccel.clone(),
-            resolution: None,
+            video_duration_secs: Some(video_duration),
+            encode_time_secs: Some(encode_time),
+            speed_ratio: Some(speed_ratio),
+            speed_description: Some(speed_description),
+            hwaccel: Some(hwaccel.to_string()),
+            resolution: Some(resolution.as_str().to_string()),
+            output_size_bytes: Some(output_size_bytes),
             error: None,
+        }))
+    }
+
+    /// Handles the SystemInfo command.
+    ///
+    /// Returns system information including platform, GPU, disk, and FFmpeg details.
+    async fn handle_system_info(&self) -> AdminResponse {
+        info!("Getting system info");
+
+        // Detect hardware encoders
+        let selected_hwaccel = HwAccel::detect();
+        let available_hwaccels = HwAccel::detect_all();
+
+        let hw_encoders: Vec<HwEncoderInfo> = available_hwaccels
+            .into_iter()
+            .map(|hw| {
+                let codecs = vec!["H.264".to_string(), "H.265 (HEVC)".to_string()];
+                HwEncoderInfo {
+                    name: hw.name().to_string(),
+                    selected: hw == selected_hwaccel,
+                    codecs,
+                }
+            })
+            .collect();
+
+        // Get GPU info
+        let gpu = get_gpu_info().await;
+
+        // Get disk info for temp directory
+        let disk = get_disk_info(&self.config.temp_dir);
+
+        // Get FFmpeg info
+        let ffmpeg_version = get_ffmpeg_version(&self.config.ffmpeg_path).await;
+        let ffmpeg = FfmpegInfo {
+            path: self.config.ffmpeg_path.to_string_lossy().to_string(),
+            version: ffmpeg_version,
+            ffprobe_path: self.config.ffprobe_path.to_string_lossy().to_string(),
+        };
+
+        AdminResponse::ok_with_data(ResponseData::SystemInfo(SystemInfoResponse {
+            platform: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            hw_encoders,
+            gpu,
+            disk,
+            ffmpeg,
+            temp_dir: self.config.temp_dir.to_string_lossy().to_string(),
         }))
     }
 
@@ -411,6 +559,179 @@ fn format_timestamp(ts: u64) -> String {
     format!("{}", secs_since_epoch)
 }
 
+/// Get FFmpeg version.
+async fn get_ffmpeg_version(ffmpeg_path: &std::path::Path) -> Option<String> {
+    let output = TokioCommand::new(ffmpeg_path)
+        .arg("-version")
+        .output()
+        .await
+        .ok()?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // First line contains version, e.g., "ffmpeg version 6.0 Copyright..."
+        stdout.lines().next().map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Get GPU information.
+async fn get_gpu_info() -> Option<GpuInfo> {
+    #[cfg(target_os = "macos")]
+    {
+        // Use system_profiler on macOS
+        let output = TokioCommand::new("system_profiler")
+            .args(["SPDisplaysDataType", "-json"])
+            .output()
+            .await
+            .ok()?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Parse JSON to get GPU name
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                if let Some(displays) = json.get("SPDisplaysDataType").and_then(|v| v.as_array()) {
+                    if let Some(first) = displays.first() {
+                        let name = first
+                            .get("sppci_model")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown")
+                            .to_string();
+                        let vendor = first
+                            .get("spdisplays_vendor")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Apple")
+                            .to_string();
+                        let vram = first
+                            .get("spdisplays_vram")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        return Some(GpuInfo {
+                            name,
+                            vendor,
+                            details: vram,
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try nvidia-smi first
+        if let Ok(output) = TokioCommand::new("nvidia-smi")
+            .args([
+                "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader",
+            ])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let parts: Vec<&str> = stdout.trim().split(',').map(|s| s.trim()).collect();
+                if !parts.is_empty() {
+                    return Some(GpuInfo {
+                        name: parts.first().unwrap_or(&"Unknown").to_string(),
+                        vendor: "NVIDIA".to_string(),
+                        details: if parts.len() >= 3 {
+                            Some(format!("VRAM: {}, Driver: {}", parts[1], parts[2]))
+                        } else {
+                            None
+                        },
+                    });
+                }
+            }
+        }
+
+        // Fallback to lspci
+        if let Ok(output) = TokioCommand::new("lspci").args(["-nn"]).output().await {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains("VGA") || line.contains("3D controller") {
+                        let vendor = if line.contains("NVIDIA") {
+                            "NVIDIA"
+                        } else if line.contains("Intel") {
+                            "Intel"
+                        } else if line.contains("AMD") || line.contains("ATI") {
+                            "AMD"
+                        } else {
+                            "Unknown"
+                        };
+                        return Some(GpuInfo {
+                            name: line.to_string(),
+                            vendor: vendor.to_string(),
+                            details: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
+/// Get disk space info for a path.
+fn get_disk_info(path: &std::path::Path) -> DiskInfo {
+    use std::ffi::CString;
+
+    let path_str = path.to_string_lossy().to_string();
+
+    #[cfg(unix)]
+    {
+        // Handle potential null bytes in path (unlikely but possible)
+        let c_path = match CString::new(path_str.as_bytes()) {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(path = %path_str, "Path contains null bytes, cannot get disk info");
+                return DiskInfo {
+                    path: path_str,
+                    free_bytes: 0,
+                    total_bytes: 0,
+                    free_percent: 0.0,
+                };
+            }
+        };
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
+
+        if result == 0 {
+            let free_bytes = stat.f_bavail as u64 * stat.f_frsize;
+            let total_bytes = stat.f_blocks as u64 * stat.f_frsize;
+            let free_percent = if total_bytes > 0 {
+                (free_bytes as f64 / total_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            return DiskInfo {
+                path: path_str,
+                free_bytes,
+                total_bytes,
+                free_percent,
+            };
+        }
+    }
+
+    // Fallback for non-unix or on error
+    DiskInfo {
+        path: path_str,
+        free_bytes: 0,
+        total_bytes: 0,
+        free_percent: 0.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,17 +742,28 @@ mod tests {
         let dvm_keys = Keys::generate();
         let admin_keys = Keys::generate();
 
-        let mut config = RemoteConfig::new();
-        config.admin = Some(admin_keys.public_key().to_hex());
+        let mut remote_config = RemoteConfig::new();
+        remote_config.admin = Some(admin_keys.public_key().to_hex());
 
-        let state = crate::dvm_state::DvmState::new_shared(dvm_keys.clone(), config);
+        let state = crate::dvm_state::DvmState::new_shared(dvm_keys.clone(), remote_config.clone());
 
         // Create a client that won't actually connect
         let client = Client::new(dvm_keys.clone());
 
         let pairing = Arc::new(RwLock::new(None));
 
-        let handler = AdminHandler::new(state, client, pairing);
+        // Create a minimal config for testing
+        let config = Arc::new(
+            Config::from_remote(
+                dvm_keys.clone(),
+                &remote_config,
+                std::path::PathBuf::from("ffmpeg"),
+                std::path::PathBuf::from("ffprobe"),
+            )
+            .expect("Failed to create test config"),
+        );
+
+        let handler = AdminHandler::new(state, client, pairing, config);
 
         (handler, dvm_keys, admin_keys)
     }
