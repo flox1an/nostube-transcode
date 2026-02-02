@@ -2,6 +2,9 @@ import type { EventTemplate } from "nostr-tools";
 import type { ISigner } from "applesauce-signers";
 import { KIND_DVM_REQUEST, RELAYS } from "./constants";
 
+/** Expiration time for transform requests (1 hour in seconds) */
+const REQUEST_EXPIRATION_SECS = 3600;
+
 export type OutputMode = "mp4" | "hls";
 export type Resolution = "360p" | "480p" | "720p" | "1080p";
 export type Codec = "h264" | "h265";
@@ -79,10 +82,15 @@ export function buildTransformRequest(
     tags.push(["param", "encryption", encryption ? "true" : "false"]);
   }
 
+  const now = Math.floor(Date.now() / 1000);
+
+  // NIP-40 expiration tag (24 hours)
+  tags.push(["expiration", String(now + REQUEST_EXPIRATION_SECS)]);
+
   return {
     kind: KIND_DVM_REQUEST,
     content: "",
-    created_at: Math.floor(Date.now() / 1000),
+    created_at: now,
     tags,
   };
 }
@@ -136,17 +144,21 @@ export async function buildEncryptedTransformRequest(
   // Encrypt the content with the DVM's public key
   const encryptedJson = await signer.nip04.encrypt(dvmPubkey, JSON.stringify(encryptedContent));
 
+  const now = Math.floor(Date.now() / 1000);
+
   // Build tags - only include public tags (p, relays, encrypted marker)
   const tags: string[][] = [
     ["p", dvmPubkey],
     ["relays", ...dvmRelays],
     ["encrypted"],
+    // NIP-40 expiration tag (24 hours)
+    ["expiration", String(now + REQUEST_EXPIRATION_SECS)],
   ];
 
   return {
     kind: KIND_DVM_REQUEST,
     content: encryptedJson,
-    created_at: Math.floor(Date.now() / 1000),
+    created_at: now,
     tags,
   };
 }

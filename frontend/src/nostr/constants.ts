@@ -1,5 +1,10 @@
 // Default relays for DVM discovery and requests
-export const RELAYS = ["wss://haven.slidestr.net"];
+// Must match backend DEFAULT_BOOTSTRAP_RELAYS in src/bootstrap.rs
+export const RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://haven.slidestr.net",
+];
 
 // Nostr event kinds for DVM protocol
 export const KIND_DVM_ANNOUNCEMENT = 31990;

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useActiveAccount, useAccountManager } from 'applesauce-react/hooks'
 import { ExtensionAccount, SimpleAccount, NostrConnectAccount } from 'applesauce-accounts/accounts'
 import { ExtensionSigner, SimpleSigner, NostrConnectSigner } from 'applesauce-signers/signers'
@@ -7,12 +8,16 @@ export function useCurrentUser() {
   const activeAccount = useActiveAccount()
 
   const isLoggedIn = !!activeAccount
-  const user = activeAccount
-    ? {
-        pubkey: activeAccount.pubkey,
-        signer: activeAccount.signer,
-      }
-    : undefined
+  const user = useMemo(
+    () =>
+      activeAccount
+        ? {
+            pubkey: activeAccount.pubkey,
+            signer: activeAccount.signer,
+          }
+        : undefined,
+    [activeAccount]
+  )
 
   const loginWithExtension = async () => {
     if (!accountManager) throw new Error('Account manager not available')

@@ -622,7 +622,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
         {!loading && activeTab === "system" && (
           <div className="system-tab">
-            <SelfTest />
+            <SelfTest dvmPubkey={dvm.pubkey} userPubkey={userPubkey} />
           </div>
         )}
       </div>

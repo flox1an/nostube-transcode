@@ -82,6 +82,9 @@ export function subscribeToResponses(
   dvmRelays: string[] = RELAYS,
   onEvent: (response: DvmResponse) => void
 ): () => void {
+  // Track seen event IDs to prevent duplicate processing
+  const seenEventIds = new Set<string>();
+
   const filter: Filter = {
     kinds: [KIND_DVM_STATUS, KIND_DVM_RESULT],
     "#e": [requestEventId],
@@ -95,6 +98,12 @@ export function subscribeToResponses(
     next(event) {
       if (typeof event === 'string') return;
       if (!('kind' in event)) return;
+
+      // Deduplicate events by ID
+      if (seenEventIds.has(event.id)) {
+        return;
+      }
+      seenEventIds.add(event.id);
 
       if (event.kind === KIND_DVM_STATUS) {
         onEvent({ type: "status", event: event as Event });
