@@ -314,8 +314,15 @@ impl VideoProcessor {
         input_height: Option<u32>,
         codec: Codec,
     ) -> Result<(TransformResult, TransformConfig), VideoError> {
-        self.transform_with_resolutions(input_url, input_height, codec, &HlsResolution::all(), None, true)
-            .await
+        self.transform_with_resolutions(
+            input_url,
+            input_height,
+            codec,
+            &HlsResolution::all(),
+            None,
+            true,
+        )
+        .await
     }
 
     /// Transform a video URL into HLS format with user-selected resolutions.
@@ -336,11 +343,8 @@ impl VideoProcessor {
         source_codec: Option<&str>,
         encryption: bool,
     ) -> Result<(TransformResult, TransformConfig), VideoError> {
-        let transform_config = TransformConfig::for_resolutions(
-            input_height,
-            selected_resolutions,
-            source_codec,
-        );
+        let transform_config =
+            TransformConfig::for_resolutions(input_height, selected_resolutions, source_codec);
 
         // Validate we have at least 2 resolutions
         if transform_config.resolutions.len() < 2 {
@@ -365,7 +369,13 @@ impl VideoProcessor {
         debug!(path = %output_dir.display(), "Created temp directory");
 
         // Build FFmpeg command with hardware acceleration
-        let mut ffmpeg = FfmpegCommand::new(input_url, output_dir, transform_config.clone(), self.hwaccel, codec);
+        let mut ffmpeg = FfmpegCommand::new(
+            input_url,
+            output_dir,
+            transform_config.clone(),
+            self.hwaccel,
+            codec,
+        );
 
         // Only enable encryption if requested (uses TS segments)
         // Without encryption, uses fMP4 segments (Safari compatible for HEVC)
@@ -381,7 +391,8 @@ impl VideoProcessor {
             // Write key info file for FFmpeg (format: key_uri\nkey_file_path)
             // Use placeholder URI - players must inject key from Nostr event
             let key_info_path = output_dir.join("key_info.txt");
-            let key_info_content = format!("{}\n{}", ENCRYPTION_KEY_PLACEHOLDER_URI, key_path.display());
+            let key_info_content =
+                format!("{}\n{}", ENCRYPTION_KEY_PLACEHOLDER_URI, key_path.display());
             fs::write(&key_info_path, key_info_content).await?;
 
             debug!(key_path = %key_path.display(), "Generated AES encryption key");
@@ -398,7 +409,9 @@ impl VideoProcessor {
         info!("FFmpeg HLS processing complete");
 
         // Collect output files
-        let result = self.collect_output_files(temp_dir, encryption_key_base64).await?;
+        let result = self
+            .collect_output_files(temp_dir, encryption_key_base64)
+            .await?;
 
         info!(
             master = %result.master_playlist_path.display(),
@@ -436,7 +449,13 @@ impl VideoProcessor {
         let output_path = output_dir.join(format!("output_{}.mp4", resolution.as_str()));
 
         // Build and run FFmpeg command with hardware acceleration
-        let mut ffmpeg = FfmpegMp4Command::new(input_url, output_path.clone(), resolution, self.hwaccel, codec);
+        let mut ffmpeg = FfmpegMp4Command::new(
+            input_url,
+            output_path.clone(),
+            resolution,
+            self.hwaccel,
+            codec,
+        );
         if let Some(q) = quality {
             ffmpeg = ffmpeg.with_crf(q);
         }
@@ -450,7 +469,11 @@ impl VideoProcessor {
         })
     }
 
-    async fn collect_output_files(&self, temp_dir: TempDir, encryption_key: String) -> Result<TransformResult, VideoError> {
+    async fn collect_output_files(
+        &self,
+        temp_dir: TempDir,
+        encryption_key: String,
+    ) -> Result<TransformResult, VideoError> {
         let output_dir = temp_dir.path();
         let mut stream_playlists = Vec::new();
         let mut segment_paths = Vec::new();
@@ -564,12 +587,19 @@ mod tests {
         assert_eq!(config.resolution_label(), "240p, 360p, 480p, 720p, 1080p");
 
         let config_4k = TransformConfig::for_resolution(Some(2160));
-        assert_eq!(config_4k.resolution_label(), "240p, 360p, 480p, 720p, 1080p, 2160p");
+        assert_eq!(
+            config_4k.resolution_label(),
+            "240p, 360p, 480p, 720p, 1080p, 2160p"
+        );
     }
 
     #[test]
     fn test_for_resolutions_selected_subset() {
-        let selected = vec![HlsResolution::R360p, HlsResolution::R720p, HlsResolution::Original];
+        let selected = vec![
+            HlsResolution::R360p,
+            HlsResolution::R720p,
+            HlsResolution::Original,
+        ];
         let config = TransformConfig::for_resolutions(Some(1080), &selected, Some("h264"));
 
         assert_eq!(config.resolutions.len(), 3);
@@ -583,7 +613,11 @@ mod tests {
 
     #[test]
     fn test_for_resolutions_incompatible_codec() {
-        let selected = vec![HlsResolution::R360p, HlsResolution::R720p, HlsResolution::Original];
+        let selected = vec![
+            HlsResolution::R360p,
+            HlsResolution::R720p,
+            HlsResolution::Original,
+        ];
         let config = TransformConfig::for_resolutions(Some(1080), &selected, Some("vp9"));
 
         // 1080p should NOT be original (needs re-encode) since vp9 is not HLS-compatible

@@ -1,9 +1,16 @@
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tracing::debug;
 
 use crate::dvm::encryption::is_encrypted;
 use crate::error::DvmError;
+
+/// Expiration time for status events (1 hour)
+const STATUS_EXPIRATION_SECS: u64 = 3600;
+
+/// Expiration time for result events (1 hour)
+const RESULT_EXPIRATION_SECS: u64 = 3600;
 
 pub const DVM_STATUS_KIND: Kind = Kind::Custom(7000);
 pub const DVM_VIDEO_TRANSFORM_REQUEST_KIND: Kind = Kind::Custom(5207);
@@ -281,7 +288,8 @@ impl JobContext {
         let tags: Vec<Tag> = event.tags.iter().cloned().collect();
         let input = Self::extract_input_from_tags(&tags)?;
         let relays = Self::extract_relays_from_tags(&tags);
-        let (mode, resolution, codec, hls_resolutions, encryption) = Self::extract_params_from_tags(&tags);
+        let (mode, resolution, codec, hls_resolutions, encryption) =
+            Self::extract_params_from_tags(&tags);
 
         Ok(Self {
             request: event,
@@ -303,14 +311,17 @@ impl JobContext {
             .map_err(|e| DvmError::JobRejected(format!("Failed to decrypt request: {}", e)))?;
 
         // Parse decrypted content as JSON containing i and params
-        let encrypted_content: EncryptedContent = serde_json::from_str(&decrypted)
-            .map_err(|e| DvmError::JobRejected(format!("Invalid encrypted content format: {}", e)))?;
+        let encrypted_content: EncryptedContent =
+            serde_json::from_str(&decrypted).map_err(|e| {
+                DvmError::JobRejected(format!("Invalid encrypted content format: {}", e))
+            })?;
 
         // Extract input from decrypted content
         let input = Self::extract_input_from_vec(&encrypted_content.i)?;
 
         // Build virtual tags from decrypted params for parameter extraction
-        let mut virtual_tags: Vec<Tag> = encrypted_content.params
+        let mut virtual_tags: Vec<Tag> = encrypted_content
+            .params
             .iter()
             .map(|p| Tag::custom(TagKind::Custom(p[0].clone().into()), p[1..].to_vec()))
             .collect();
@@ -325,7 +336,8 @@ impl JobContext {
         }
 
         let relays = Self::extract_relays_from_tags(&virtual_tags);
-        let (mode, resolution, codec, hls_resolutions, encryption) = Self::extract_params_from_tags(&virtual_tags);
+        let (mode, resolution, codec, hls_resolutions, encryption) =
+            Self::extract_params_from_tags(&virtual_tags);
 
         Ok(Self {
             request: event,
@@ -340,7 +352,9 @@ impl JobContext {
         })
     }
 
-    fn extract_params_from_tags(tags: &[Tag]) -> (OutputMode, Resolution, Codec, Vec<HlsResolution>, bool) {
+    fn extract_params_from_tags(
+        tags: &[Tag],
+    ) -> (OutputMode, Resolution, Codec, Vec<HlsResolution>, bool) {
         let mut mode = OutputMode::default();
         let mut resolution = Resolution::default();
         let mut codec = Codec::default();
@@ -392,7 +406,9 @@ impl JobContext {
     /// Extract input from decrypted content's "i" array
     fn extract_input_from_vec(i: &[String]) -> Result<DvmInput, DvmError> {
         if i.len() < 2 {
-            return Err(DvmError::JobRejected("Invalid encrypted input format".into()));
+            return Err(DvmError::JobRejected(
+                "Invalid encrypted input format".into(),
+            ));
         }
 
         Ok(DvmInput {
@@ -404,8 +420,7 @@ impl JobContext {
     }
 
     fn extract_relays_from_tags(tags: &[Tag]) -> Vec<::url::Url> {
-        tags
-            .iter()
+        tags.iter()
             .find(|t| t.as_slice().first().map(|s| s.as_str()) == Some("relays"))
             .map(|t| {
                 t.as_slice()[1..]
@@ -457,7 +472,11 @@ pub fn build_status_event_with_eta_encrypted(
     remaining_secs: Option<u64>,
     keys: Option<&Keys>,
 ) -> EventBuilder {
+    // NIP-40 expiration: 24 hours
+    let expiration = Timestamp::now() + Duration::from_secs(STATUS_EXPIRATION_SECS);
+
     let mut tags = vec![
+        Tag::expiration(expiration),
         Tag::event(job_id),
         Tag::public_key(requester),
         Tag::custom(
@@ -476,8 +495,13 @@ pub fn build_status_event_with_eta_encrypted(
         });
 
         // Encrypt the content
-        if let Ok(encrypted) = nip04::encrypt(keys.secret_key(), &requester, status_content.to_string()) {
-            tags.push(Tag::custom(TagKind::Custom("encrypted".into()), Vec::<String>::new()));
+        if let Ok(encrypted) =
+            nip04::encrypt(keys.secret_key(), &requester, status_content.to_string())
+        {
+            tags.push(Tag::custom(
+                TagKind::Custom("encrypted".into()),
+                Vec::<String>::new(),
+            ));
             return EventBuilder::new(DVM_STATUS_KIND, encrypted, tags);
         }
     }
@@ -516,7 +540,14 @@ pub fn build_result_event_encrypted(
     result: &DvmResult,
     keys: Option<&Keys>,
 ) -> EventBuilder {
-    let mut tags = vec![Tag::event(job_id), Tag::public_key(requester)];
+    // NIP-40 expiration: 7 days
+    let expiration = Timestamp::now() + Duration::from_secs(RESULT_EXPIRATION_SECS);
+
+    let mut tags = vec![
+        Tag::expiration(expiration),
+        Tag::event(job_id),
+        Tag::public_key(requester),
+    ];
 
     // NIP-90: output goes in content field as JSON
     let content = serde_json::to_string(result).unwrap_or_default();
@@ -524,7 +555,10 @@ pub fn build_result_event_encrypted(
     // Encrypt if keys provided
     if let Some(keys) = keys {
         if let Ok(encrypted) = nip04::encrypt(keys.secret_key(), &requester, &content) {
-            tags.push(Tag::custom(TagKind::Custom("encrypted".into()), Vec::<String>::new()));
+            tags.push(Tag::custom(
+                TagKind::Custom("encrypted".into()),
+                Vec::<String>::new(),
+            ));
             return EventBuilder::new(DVM_VIDEO_TRANSFORM_RESULT_KIND, encrypted, tags);
         }
     }
@@ -550,9 +584,18 @@ mod tests {
         assert_eq!(HlsResolution::from_str("360p"), Some(HlsResolution::R360p));
         assert_eq!(HlsResolution::from_str("480p"), Some(HlsResolution::R480p));
         assert_eq!(HlsResolution::from_str("720p"), Some(HlsResolution::R720p));
-        assert_eq!(HlsResolution::from_str("1080p"), Some(HlsResolution::R1080p));
-        assert_eq!(HlsResolution::from_str("original"), Some(HlsResolution::Original));
-        assert_eq!(HlsResolution::from_str("ORIGINAL"), Some(HlsResolution::Original));
+        assert_eq!(
+            HlsResolution::from_str("1080p"),
+            Some(HlsResolution::R1080p)
+        );
+        assert_eq!(
+            HlsResolution::from_str("original"),
+            Some(HlsResolution::Original)
+        );
+        assert_eq!(
+            HlsResolution::from_str("ORIGINAL"),
+            Some(HlsResolution::Original)
+        );
         assert_eq!(HlsResolution::from_str("invalid"), None);
     }
 

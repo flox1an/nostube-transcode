@@ -21,7 +21,13 @@ pub struct FfmpegCommand {
 }
 
 impl FfmpegCommand {
-    pub fn new(input: &str, output_dir: &Path, config: TransformConfig, hwaccel: HwAccel, codec: Codec) -> Self {
+    pub fn new(
+        input: &str,
+        output_dir: &Path,
+        config: TransformConfig,
+        hwaccel: HwAccel,
+        codec: Codec,
+    ) -> Self {
         Self {
             input: input.to_string(),
             output_dir: output_dir.to_path_buf(),
@@ -68,7 +74,10 @@ impl FfmpegCommand {
             .arg("-master_pl_name")
             .arg("master.m3u8")
             .arg("-hls_segment_filename")
-            .arg(self.output_dir.join(format!("stream_%v_%03d.{}", self.config.segment_type.extension())));
+            .arg(self.output_dir.join(format!(
+                "stream_%v_%03d.{}",
+                self.config.segment_type.extension()
+            )));
 
         // Output pattern
         let output = self.output_dir.join("stream_%v.m3u8");
@@ -125,7 +134,10 @@ impl FfmpegCommand {
             .arg("-master_pl_name")
             .arg("master.m3u8")
             .arg("-hls_segment_filename")
-            .arg(self.output_dir.join(format!("stream_%v_%03d.{}", segment_ext)));
+            .arg(
+                self.output_dir
+                    .join(format!("stream_%v_%03d.{}", segment_ext)),
+            );
 
         // Add AES-128 encryption if key info file is provided
         if let Some(ref key_info_path) = self.key_info_path {
@@ -226,13 +238,26 @@ impl FfmpegCommand {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
                 // Upload frames to hardware memory before splitting/scaling
                 // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
-                format!("[0:v]{},split={}{}", upload_filter, non_original.len(), output_labels.join(""))
+                format!(
+                    "[0:v]{},split={}{}",
+                    upload_filter,
+                    non_original.len(),
+                    output_labels.join("")
+                )
             } else {
-                format!("[0:v]split={}{}", non_original.len(), output_labels.join(""))
+                format!(
+                    "[0:v]split={}{}",
+                    non_original.len(),
+                    output_labels.join("")
+                )
             }
         } else {
             // hwaccel_output_format is set, so frames are already in hardware memory
-            format!("[0:v]split={}{}", non_original.len(), output_labels.join(""))
+            format!(
+                "[0:v]split={}{}",
+                non_original.len(),
+                output_labels.join("")
+            )
         };
         parts.push(input_chain);
 
@@ -242,15 +267,24 @@ impl FfmpegCommand {
             match (res.width, res.height) {
                 (Some(w), Some(h)) => {
                     // Both dimensions specified
-                    parts.push(format!("[{}]{}=w={}:h={}[{}out]", name, scale_filter, w, h, name));
+                    parts.push(format!(
+                        "[{}]{}=w={}:h={}[{}out]",
+                        name, scale_filter, w, h, name
+                    ));
                 }
                 (None, Some(h)) => {
                     // Only height specified - auto-calculate width to preserve aspect ratio
-                    parts.push(format!("[{}]{}=w=-2:h={}[{}out]", name, scale_filter, h, name));
+                    parts.push(format!(
+                        "[{}]{}=w=-2:h={}[{}out]",
+                        name, scale_filter, h, name
+                    ));
                 }
                 (Some(w), None) => {
                     // Only width specified - auto-calculate height to preserve aspect ratio
-                    parts.push(format!("[{}]{}=w={}:h=-2[{}out]", name, scale_filter, w, name));
+                    parts.push(format!(
+                        "[{}]{}=w={}:h=-2[{}out]",
+                        name, scale_filter, w, name
+                    ));
                 }
                 (None, None) => {
                     // No dimensions - should not happen for non-original, skip
@@ -343,7 +377,10 @@ impl FfmpegCommand {
                     .arg(video_codec);
 
                 // Add hvc1 tag for Safari/iOS compatibility when using H.265
-                if self.codec == Codec::H265 || video_codec.contains("hevc") || video_codec.contains("265") {
+                if self.codec == Codec::H265
+                    || video_codec.contains("hevc")
+                    || video_codec.contains("265")
+                {
                     cmd.arg(format!("-tag:v:{}", idx)).arg("hvc1");
                 }
 
@@ -351,12 +388,18 @@ impl FfmpegCommand {
                 if let Some(q) = res.quality {
                     let (quality_param, quality_value) = self.hwaccel.quality_param(q);
                     // For per-stream quality, append stream index
-                    let param_with_idx = format!("{}:{}", quality_param.trim_start_matches('-'), idx);
+                    let param_with_idx =
+                        format!("{}:{}", quality_param.trim_start_matches('-'), idx);
                     cmd.arg(format!("-{}", param_with_idx)).arg(&quality_value);
                 }
 
                 // Add encoder-specific options (only for first encoded stream to avoid duplicates)
-                if idx == 0 || !keys.iter().take(idx).any(|k| !self.config.resolutions[*k].is_original) {
+                if idx == 0
+                    || !keys
+                        .iter()
+                        .take(idx)
+                        .any(|k| !self.config.resolutions[*k].is_original)
+                {
                     for (opt, val) in self.hwaccel.encoder_options(self.codec) {
                         cmd.arg(opt).arg(val);
                     }
@@ -392,7 +435,13 @@ pub struct FfmpegMp4Command {
 }
 
 impl FfmpegMp4Command {
-    pub fn new(input: &str, output_path: PathBuf, resolution: Resolution, hwaccel: HwAccel, codec: Codec) -> Self {
+    pub fn new(
+        input: &str,
+        output_path: PathBuf,
+        resolution: Resolution,
+        hwaccel: HwAccel,
+        codec: Codec,
+    ) -> Self {
         Self {
             input: input.to_string(),
             output_path,
@@ -536,7 +585,13 @@ mod tests {
     #[test]
     fn test_ffmpeg_command_building() {
         let config = TransformConfig::default();
-        let cmd = FfmpegCommand::new("input.mp4", Path::new("/tmp/output"), config, HwAccel::Software, Codec::H264);
+        let cmd = FfmpegCommand::new(
+            "input.mp4",
+            Path::new("/tmp/output"),
+            config,
+            HwAccel::Software,
+            Codec::H264,
+        );
 
         let built = cmd.build();
         let args: Vec<&OsStr> = built.get_args().collect();
