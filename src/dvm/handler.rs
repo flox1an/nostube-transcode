@@ -10,8 +10,8 @@ use tracing::{debug, error, info, warn};
 use crate::blossom::BlossomClient;
 use crate::config::Config;
 use crate::dvm::events::{
-    build_result_event_encrypted, build_status_event_with_eta_encrypted,
-    Codec, DvmResult, HlsResolution, JobContext, JobStatus, Mp4Result, OutputMode,
+    build_result_event_encrypted, build_status_event_with_eta_encrypted, Codec, DvmResult,
+    HlsResolution, JobContext, JobStatus, Mp4Result, OutputMode,
 };
 use crate::error::DvmError;
 use crate::nostr::EventPublisher;
@@ -115,14 +115,16 @@ impl JobHandler {
         let requester = job.requester();
 
         // Send processing status
-        self.send_status(&job, JobStatus::Processing, Some("Starting video transformation"))
-            .await?;
+        self.send_status(
+            &job,
+            JobStatus::Processing,
+            Some("Starting video transformation"),
+        )
+        .await?;
 
         // Validate input
         if job.input.input_type != "url" {
-            return self
-                .send_error(&job, "Only URL inputs are supported")
-                .await;
+            return self.send_error(&job, "Only URL inputs are supported").await;
         }
 
         // Validate URL scheme (only allow HTTP/HTTPS for security)
@@ -150,8 +152,12 @@ impl JobHandler {
                 self.publisher.publish(event).await?;
 
                 // Send success status
-                self.send_status(&job, JobStatus::Success, Some("Video transformation complete"))
-                    .await?;
+                self.send_status(
+                    &job,
+                    JobStatus::Success,
+                    Some("Video transformation complete"),
+                )
+                .await?;
             }
             Err(e) => {
                 error!(job_id = %job_id, error = %e, "Video processing failed");
@@ -185,8 +191,17 @@ impl JobHandler {
                     Codec::H264 => "H.264",
                     Codec::H265 => "H.265",
                 };
-                let status_msg = format!("Transcoding to {} {} MP4", job.resolution.as_str(), codec_name);
-                self.send_status(job, JobStatus::Processing, Some(&format!("{}...", status_msg))).await?;
+                let status_msg = format!(
+                    "Transcoding to {} {} MP4",
+                    job.resolution.as_str(),
+                    codec_name
+                );
+                self.send_status(
+                    job,
+                    JobStatus::Processing,
+                    Some(&format!("{}...", status_msg)),
+                )
+                .await?;
 
                 // Estimate: hardware encoding is roughly 2-5x realtime, use 3x as baseline
                 let estimated_transcode_secs = (video_duration_secs / 3.0) as u64;
@@ -194,7 +209,17 @@ impl JobHandler {
                 // Transform with periodic progress updates
                 // Use quality 15 for good quality on VideoToolbox (maps to q:v 70)
                 let result = self
-                    .run_with_progress(job, &status_msg, estimated_transcode_secs, self.processor.transform_mp4(input_url, job.resolution, Some(15), job.codec))
+                    .run_with_progress(
+                        job,
+                        &status_msg,
+                        estimated_transcode_secs,
+                        self.processor.transform_mp4(
+                            input_url,
+                            job.resolution,
+                            Some(15),
+                            job.codec,
+                        ),
+                    )
                     .await?;
 
                 // Get file size for upload estimation
@@ -207,11 +232,26 @@ impl JobHandler {
                 let num_servers = self.blossom.server_count();
                 let total_upload_bytes = file_size * num_servers as u64;
 
-                let upload_msg = format!("Uploading MP4 to {} server{}", num_servers, if num_servers == 1 { "" } else { "s" });
-                self.send_status(job, JobStatus::Processing, Some(&format!("{}...", upload_msg))).await?;
+                let upload_msg = format!(
+                    "Uploading MP4 to {} server{}",
+                    num_servers,
+                    if num_servers == 1 { "" } else { "s" }
+                );
+                self.send_status(
+                    job,
+                    JobStatus::Processing,
+                    Some(&format!("{}...", upload_msg)),
+                )
+                .await?;
 
                 let blobs = self
-                    .run_single_file_upload_with_adaptive_progress(job, &upload_msg, total_upload_bytes, &result.output_path, "video/mp4")
+                    .run_single_file_upload_with_adaptive_progress(
+                        job,
+                        &upload_msg,
+                        total_upload_bytes,
+                        &result.output_path,
+                        "video/mp4",
+                    )
                     .await?;
 
                 // Cleanup temp files
@@ -232,7 +272,11 @@ impl JobHandler {
             }
             OutputMode::Hls => {
                 // Get input height and codec for resolution-aware transcoding
-                let input_height = metadata.as_ref().ok().and_then(|m| m.resolution()).map(|(_, h)| h);
+                let input_height = metadata
+                    .as_ref()
+                    .ok()
+                    .and_then(|m| m.resolution())
+                    .map(|(_, h)| h);
                 let source_codec = metadata
                     .as_ref()
                     .ok()
@@ -247,23 +291,31 @@ impl JobHandler {
                 };
 
                 // Build status message based on selected resolutions
-                let resolution_list: Vec<&str> = selected_resolutions
-                    .iter()
-                    .map(|r| r.as_str())
-                    .collect();
+                let resolution_list: Vec<&str> =
+                    selected_resolutions.iter().map(|r| r.as_str()).collect();
                 let codec_name = match job.codec {
                     Codec::H264 => "H.264",
                     Codec::H265 => "H.265",
                 };
-                let status_msg = format!("Transcoding to {} HLS ({})", codec_name, resolution_list.join(", "));
-                self.send_status(job, JobStatus::Processing, Some(&format!("{}...", status_msg))).await?;
+                let status_msg = format!(
+                    "Transcoding to {} HLS ({})",
+                    codec_name,
+                    resolution_list.join(", ")
+                );
+                self.send_status(
+                    job,
+                    JobStatus::Processing,
+                    Some(&format!("{}...", status_msg)),
+                )
+                .await?;
 
                 // Estimate: count encoded streams (non-original resolutions)
                 let encoded_count = selected_resolutions
                     .iter()
                     .filter(|r| **r != HlsResolution::Original)
                     .count() as f64;
-                let estimated_transcode_secs = (video_duration_secs / 3.0 * encoded_count.max(1.0)) as u64;
+                let estimated_transcode_secs =
+                    (video_duration_secs / 3.0 * encoded_count.max(1.0)) as u64;
 
                 // Transform with periodic progress updates using user-selected resolutions
                 let (result, _transform_config) = self
@@ -293,7 +345,12 @@ impl JobHandler {
                 }
 
                 let upload_msg = format!("Uploading {} files to Blossom", total_files);
-                self.send_status(job, JobStatus::Processing, Some(&format!("{}...", upload_msg))).await?;
+                self.send_status(
+                    job,
+                    JobStatus::Processing,
+                    Some(&format!("{}...", upload_msg)),
+                )
+                .await?;
 
                 // Upload with adaptive progress tracking
                 let hls_result = self
@@ -341,9 +398,15 @@ impl JobHandler {
 
                 let (progress_msg, remaining_secs) = if estimated_secs > 0 {
                     let remaining = estimated_secs.saturating_sub(elapsed);
-                    (format!("{} (~{} remaining)", message, format_duration(remaining)), Some(remaining))
+                    (
+                        format!("{} (~{} remaining)", message, format_duration(remaining)),
+                        Some(remaining),
+                    )
                 } else {
-                    (format!("{} ({} elapsed)", message, format_duration(elapsed)), None)
+                    (
+                        format!("{} ({} elapsed)", message, format_duration(elapsed)),
+                        None,
+                    )
                 };
 
                 let event = build_status_event_with_eta_encrypted(
@@ -432,12 +495,7 @@ impl JobHandler {
                         speed_mbps
                     )
                 } else if speed_mbps > 0.1 {
-                    format!(
-                        "{} ({}% @ {:.1} MB/s)",
-                        message,
-                        percent,
-                        speed_mbps
-                    )
+                    format!("{} ({}% @ {:.1} MB/s)", message, percent, speed_mbps)
                 } else {
                     format!("{} ({}%)", message, percent)
                 };
@@ -447,7 +505,11 @@ impl JobHandler {
                     requester,
                     JobStatus::Processing,
                     Some(&progress_msg),
-                    if remaining_secs > 0 { Some(remaining_secs) } else { None },
+                    if remaining_secs > 0 {
+                        Some(remaining_secs)
+                    } else {
+                        None
+                    },
                     encryption_keys.as_ref(),
                 );
                 if let Err(e) = publisher.publish(event).await {
@@ -501,7 +563,10 @@ impl JobHandler {
 
                 let (remaining_secs, speed_mbps) = {
                     let t = tracker_for_task.lock().unwrap();
-                    (t.estimated_remaining_secs(), t.average_speed() / (1024.0 * 1024.0))
+                    (
+                        t.estimated_remaining_secs(),
+                        t.average_speed() / (1024.0 * 1024.0),
+                    )
                 };
 
                 let progress_msg = format!(

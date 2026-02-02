@@ -4,6 +4,7 @@
 
 use crate::admin::commands::{parse_command, serialize_response};
 use crate::admin::handler::AdminHandler;
+use crate::config::Config;
 use crate::dvm_state::SharedDvmState;
 use crate::pairing::PairingState;
 use nostr_sdk::prelude::*;
@@ -20,8 +21,9 @@ pub async fn run_admin_listener(
     keys: Keys,
     state: SharedDvmState,
     pairing: Arc<RwLock<Option<PairingState>>>,
+    config: Arc<Config>,
 ) {
-    let handler = AdminHandler::new(state.clone(), client.clone(), pairing);
+    let handler = AdminHandler::new(state.clone(), client.clone(), pairing, config);
 
     // Subscribe to encrypted DMs (NIP-04) addressed to us
     let filter = Filter::new()

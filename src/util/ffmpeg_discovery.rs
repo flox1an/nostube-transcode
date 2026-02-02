@@ -130,7 +130,10 @@ impl FfmpegPaths {
         {
             // Windows common locations
             if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                paths.push(PathBuf::from(format!("{}\\ffmpeg\\bin\\ffmpeg.exe", local_app_data)));
+                paths.push(PathBuf::from(format!(
+                    "{}\\ffmpeg\\bin\\ffmpeg.exe",
+                    local_app_data
+                )));
             }
             paths.push(PathBuf::from("C:\\ffmpeg\\bin\\ffmpeg.exe"));
             paths.push(PathBuf::from("C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"));
@@ -165,7 +168,10 @@ impl FfmpegPaths {
         #[cfg(target_os = "windows")]
         {
             if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                paths.push(PathBuf::from(format!("{}\\ffmpeg\\bin\\ffprobe.exe", local_app_data)));
+                paths.push(PathBuf::from(format!(
+                    "{}\\ffmpeg\\bin\\ffprobe.exe",
+                    local_app_data
+                )));
             }
             paths.push(PathBuf::from("C:\\ffmpeg\\bin\\ffprobe.exe"));
             paths.push(PathBuf::from("C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe"));

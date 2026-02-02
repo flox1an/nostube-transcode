@@ -99,7 +99,10 @@ pub async fn fetch_config(
         .limit(1);
 
     let events = client
-        .get_events_of(vec![filter], EventSource::relays(Some(Duration::from_secs(10))))
+        .get_events_of(
+            vec![filter],
+            EventSource::relays(Some(Duration::from_secs(10))),
+        )
         .await
         .map_err(|e| RemoteConfigError::RelayError(e.to_string()))?;
 

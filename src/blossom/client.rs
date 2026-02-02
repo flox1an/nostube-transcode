@@ -183,7 +183,14 @@ impl BlossomClient {
             // Reset the counter for each server (since we're uploading the full file again)
             let server_bytes = Arc::new(AtomicU64::new(0));
             match self
-                .upload_to_server_with_progress(server, path, &sha256, file_size, mime_type, server_bytes.clone())
+                .upload_to_server_with_progress(
+                    server,
+                    path,
+                    &sha256,
+                    file_size,
+                    mime_type,
+                    server_bytes.clone(),
+                )
                 .await
             {
                 Ok(blob) => {
@@ -233,7 +240,14 @@ impl BlossomClient {
         for server in &self.config.blossom_servers {
             let upload_start = Instant::now();
             match self
-                .upload_to_server_with_progress(server, path, &sha256, file_size, mime_type, bytes_uploaded.clone())
+                .upload_to_server_with_progress(
+                    server,
+                    path,
+                    &sha256,
+                    file_size,
+                    mime_type,
+                    bytes_uploaded.clone(),
+                )
                 .await
             {
                 Ok(blob) => {
@@ -271,7 +285,8 @@ impl BlossomClient {
         mime_type: &str,
     ) -> Result<BlobDescriptor, BlossomError> {
         let dummy_counter = Arc::new(AtomicU64::new(0));
-        self.upload_to_server_with_progress(server, path, sha256, size, mime_type, dummy_counter).await
+        self.upload_to_server_with_progress(server, path, sha256, size, mime_type, dummy_counter)
+            .await
     }
 
     async fn upload_to_server_with_progress(
@@ -325,10 +340,7 @@ impl BlossomClient {
                 sha256 = %sha256,
                 "Blossom upload failed"
             );
-            return Err(BlossomError::UploadFailed(format!(
-                "{}: {}",
-                status, text
-            )));
+            return Err(BlossomError::UploadFailed(format!("{}: {}", status, text)));
         }
 
         let response_text = response.text().await?;
@@ -357,7 +369,8 @@ impl BlossomClient {
         &self,
         result: &TransformResult,
     ) -> Result<HlsResult, BlossomError> {
-        self.upload_hls_output_with_progress(result, |_, _| {}).await
+        self.upload_hls_output_with_progress(result, |_, _| {})
+            .await
     }
 
     /// Upload all HLS output files to Blossom with progress callback
@@ -401,7 +414,10 @@ impl BlossomClient {
             total_size += file_size;
 
             // Extract stream index and accumulate size
-            if let Some(caps) = stream_idx_regex.as_ref().and_then(|re| re.captures(filename)) {
+            if let Some(caps) = stream_idx_regex
+                .as_ref()
+                .and_then(|re| re.captures(filename))
+            {
                 let stream_idx = &caps[1];
                 let playlist_name = format!("stream_{}.m3u8", stream_idx);
                 *stream_sizes.entry(playlist_name).or_insert(0) += file_size;
@@ -521,19 +537,16 @@ impl BlossomClient {
                         .take()
                         .map(|r| {
                             // Convert "1280x720" to "720p"
-                            r.split('x')
-                                .nth(1)
-                                .map(|h| format!("{}p", h))
-                                .unwrap_or(r)
+                            r.split('x').nth(1).map(|h| format!("{}p", h)).unwrap_or(r)
                         })
                         .unwrap_or_else(|| "unknown".to_string());
 
                     let size_bytes = stream_sizes.get(line).copied().unwrap_or(0);
 
                     // Build mimetype with codecs if available
-                    let mimetype = current_codecs.take().map(|codecs| {
-                        format!("video/mp4; codecs=\"{}\"", codecs)
-                    });
+                    let mimetype = current_codecs
+                        .take()
+                        .map(|codecs| format!("video/mp4; codecs=\"{}\"", codecs));
 
                     results.push(StreamPlaylist {
                         url: url.clone(),
@@ -582,7 +595,8 @@ impl BlossomClient {
 
     /// Delete a blob by its hash
     pub async fn delete_blob(&self, server: &Url, sha256: &str) -> Result<(), BlossomError> {
-        let auth_token = crate::blossom::auth::create_delete_auth_token(&self.config.nostr_keys, sha256)?;
+        let auth_token =
+            crate::blossom::auth::create_delete_auth_token(&self.config.nostr_keys, sha256)?;
 
         let url = server.join(&format!("/{}", sha256))?;
 

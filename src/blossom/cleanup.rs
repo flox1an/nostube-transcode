@@ -34,8 +34,8 @@ impl BlobCleanup {
 
     /// Clean up expired blobs from all Blossom servers
     pub async fn cleanup_expired_blobs(&self) -> Result<usize, crate::error::BlossomError> {
-        let expiration_threshold = Utc::now()
-            - Duration::days(self.config.blob_expiration_days as i64);
+        let expiration_threshold =
+            Utc::now() - Duration::days(self.config.blob_expiration_days as i64);
         let threshold_ts = expiration_threshold.timestamp();
 
         info!(
@@ -69,10 +69,7 @@ impl BlobCleanup {
     ) -> Result<usize, crate::error::BlossomError> {
         let blobs = self.client.list_blobs(server).await?;
 
-        let expired: Vec<_> = blobs
-            .iter()
-            .filter(|b| b.uploaded < threshold_ts)
-            .collect();
+        let expired: Vec<_> = blobs.iter().filter(|b| b.uploaded < threshold_ts).collect();
 
         debug!(
             server = %server,

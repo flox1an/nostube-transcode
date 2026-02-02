@@ -3,11 +3,13 @@
 //! Handles the complete startup sequence including identity loading,
 //! config fetching, and pairing mode.
 
-use crate::bootstrap::{get_admin_app_url, get_bootstrap_relays};
+use crate::bootstrap::{get_admin_app_urls, get_bootstrap_relays};
+use crate::config::Config;
 use crate::dvm_state::{DvmState, SharedDvmState};
 use crate::identity::load_or_generate_identity;
 use crate::pairing::PairingState;
 use crate::remote_config::{fetch_config, RemoteConfig};
+use crate::util::ffmpeg_discovery::FfmpegPaths;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -19,6 +21,7 @@ pub struct StartupResult {
     pub state: SharedDvmState,
     pub pairing: Arc<RwLock<Option<PairingState>>>,
     pub needs_pairing: bool,
+    pub config: Arc<Config>,
 }
 
 /// Initialize the DVM on startup.
@@ -73,7 +76,7 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
 
         // Create pairing state and display
         let pairing_state = PairingState::new(keys.public_key());
-        pairing_state.display(&get_admin_app_url());
+        pairing_state.display_urls(&get_admin_app_urls());
 
         *pairing.write().await = Some(pairing_state);
     } else {
@@ -93,7 +96,19 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
         }
     }
 
-    // Step 5: Create DVM state
+    // Step 5: Discover FFmpeg binaries
+    tracing::info!("Discovering FFmpeg binaries...");
+    let ffmpeg_paths = FfmpegPaths::discover()?;
+
+    // Step 6: Create Config from RemoteConfig
+    let config = Arc::new(Config::from_remote(
+        keys.clone(),
+        &remote_config,
+        ffmpeg_paths.ffmpeg,
+        ffmpeg_paths.ffprobe,
+    )?);
+
+    // Step 7: Create DVM state
     let state = DvmState::new_shared(keys.clone(), remote_config);
 
     Ok(StartupResult {
@@ -102,6 +117,7 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
         state,
         pairing,
         needs_pairing,
+        config,
     })
 }
 
@@ -116,6 +132,12 @@ mod tests {
         let client = Client::new(keys.clone());
         let state = DvmState::new_shared(keys.clone(), RemoteConfig::new());
         let pairing = Arc::new(RwLock::new(None));
+        let config = Arc::new(Config::from_remote(
+            keys.clone(),
+            &RemoteConfig::new(),
+            std::path::PathBuf::from("ffmpeg"),
+            std::path::PathBuf::from("ffprobe"),
+        ).unwrap());
 
         let result = StartupResult {
             keys: keys.clone(),
@@ -123,6 +145,7 @@ mod tests {
             state,
             pairing,
             needs_pairing: true,
+            config,
         };
 
         assert!(result.needs_pairing);

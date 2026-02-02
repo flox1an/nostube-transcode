@@ -54,11 +54,11 @@ impl PairingState {
 
     /// Returns the pairing URL for this session.
     ///
-    /// Format: `{base_url}/pair?dvm={npub}&secret={secret}`
+    /// Format: `{base_url}/admin/pair?dvm={npub}&secret={secret}`
     pub fn pairing_url(&self, base_url: &str) -> String {
         let npub = self.dvm_pubkey.to_bech32().unwrap_or_default();
         format!(
-            "{}/pair?dvm={}&secret={}",
+            "{}/admin/pair?dvm={}&secret={}",
             base_url.trim_end_matches('/'),
             npub,
             self.secret
@@ -67,9 +67,17 @@ impl PairingState {
 
     /// Displays the pairing QR code to the console.
     pub fn display(&self, base_url: &str) {
-        let url = self.pairing_url(base_url);
+        self.display_urls(&[base_url.to_string()]);
+    }
 
-        match QrCode::new(&url) {
+    /// Displays the pairing QR code with multiple URLs.
+    pub fn display_urls(&self, base_urls: &[String]) {
+        let primary_url = base_urls
+            .first()
+            .map(|url| self.pairing_url(url))
+            .unwrap_or_default();
+
+        match QrCode::new(&primary_url) {
             Ok(code) => {
                 let qr_string = code
                     .render::<unicode::Dense1x2>()
@@ -79,16 +87,18 @@ impl PairingState {
 
                 println!("\n=== DVM Pairing ===\n");
                 println!("{}", qr_string);
-                println!("\nPairing URL: {}", url);
-                println!("Secret: {}", self.secret);
-                println!("\nThis pairing code expires in 5 minutes.\n");
             }
             Err(e) => {
                 eprintln!("Failed to generate QR code: {}", e);
-                println!("\nPairing URL: {}", url);
-                println!("Secret: {}", self.secret);
             }
         }
+
+        println!("\nPairing URLs:");
+        for base_url in base_urls {
+            println!("  {}", self.pairing_url(base_url));
+        }
+        println!("\nSecret: {}", self.secret);
+        println!("\nThis pairing code expires in 5 minutes.\n");
     }
 
     /// Returns the secret for testing purposes.
@@ -102,12 +112,11 @@ impl PairingState {
 ///
 /// Uses a character set that excludes confusing characters (0, 1, i, l, o).
 fn generate_pairing_secret() -> String {
-    use ::rand::Rng;
     let mut rng = ::rand::rng();
     let mut chars = Vec::with_capacity(SECRET_LENGTH);
 
     for _ in 0..SECRET_LENGTH {
-        let idx = rng.random_range(0..SECRET_CHARSET.len());
+        let idx = ::rand::Rng::random_range(&mut rng, 0..SECRET_CHARSET.len());
         chars.push(SECRET_CHARSET[idx] as char);
     }
 
@@ -197,8 +206,8 @@ mod tests {
         let url = state.pairing_url("https://example.com");
         let npub = keys.public_key().to_bech32().unwrap();
 
-        // Should contain base URL
-        assert!(url.starts_with("https://example.com/pair?"));
+        // Should contain base URL with /admin/pair
+        assert!(url.starts_with("https://example.com/admin/pair?"));
 
         // Should contain dvm parameter with npub
         assert!(url.contains(&format!("dvm={}", npub)));
@@ -208,7 +217,7 @@ mod tests {
 
         // Test with trailing slash
         let url2 = state.pairing_url("https://example.com/");
-        assert!(url2.starts_with("https://example.com/pair?"));
+        assert!(url2.starts_with("https://example.com/admin/pair?"));
     }
 
     #[test]
