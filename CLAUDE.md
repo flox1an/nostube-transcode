@@ -44,8 +44,8 @@ npm run lint
 
 ### Core Components
 
-- **main.rs** - Entry point, spawns four async tasks: subscription manager, job handler, cleanup scheduler, HTTP server
-- **config.rs** - Environment configuration loaded from `.env`
+- **main.rs** - Entry point, initializes DVM in remote config mode
+- **config.rs** - Configuration from remote Nostr config (NIP-78)
 - **lib.rs** - Re-exports all modules for testing
 
 ### Module Structure
@@ -87,21 +87,45 @@ npm run lint
 5. `BlossomClient` uploads segments/playlists, rewrites URLs to SHA-256 hashes
 6. Result event (kind 6207) published with master playlist URL
 
+## Remote Configuration
+
+The DVM uses zero-config startup:
+
+1. Generate an identity (saved to `~/.local/share/dvm-video/identity.key`)
+2. Connect to bootstrap relays
+3. Enter pairing mode, displaying a QR code
+4. Wait for admin to claim via the web app
+5. Load configuration from Nostr (NIP-78)
+
+### Remote Config Modules
+- `src/identity.rs` - Identity key persistence
+- `src/bootstrap.rs` - Bootstrap relay management
+- `src/remote_config.rs` - NIP-78 config storage
+- `src/pairing.rs` - Pairing mode and QR codes
+- `src/admin/` - Admin command handling
+- `src/dvm_state.rs` - Runtime state management
+- `src/startup.rs` - Startup orchestration
+
+### Admin Commands
+Sent as NIP-04 encrypted DMs:
+- `get_config` - Get current configuration
+- `set_relays` - Update relay list
+- `set_blossom_servers` - Update Blossom servers
+- `set_profile` - Update name/about
+- `pause` / `resume` - Control job processing
+- `status` - Get DVM status
+- `job_history` - Get recent jobs
+
 ## Environment Variables
 
-Required:
-- `NOSTR_PRIVATE_KEY` - 64-char hex private key
-- `NOSTR_RELAYS` - Comma-separated relay URLs
-- `BLOSSOM_UPLOAD_SERVERS` - Comma-separated Blossom server URLs
+All configuration is managed via remote config (NIP-78). Optional environment variables:
 
-Optional:
-- `BLOSSOM_BLOB_EXPIRATION_DAYS` - Default 30
+- `BOOTSTRAP_RELAYS` - Comma-separated bootstrap relays (default: wss://relay.damus.io,wss://nos.lol)
+- `DVM_ADMIN_APP_URL` - Admin web app URL for pairing links
 - `HTTP_PORT` - Default 3000
 - `TEMP_DIR` - Default ./temp
 - `FFMPEG_PATH` / `FFPROBE_PATH` - Default uses system PATH
 - `RUST_LOG` - Logging level
-- `DVM_NAME` - Override DVM announcement name (default: "Video Transform DVM")
-- `DVM_ABOUT` - Override DVM announcement description
 
 ## Key Dependencies
 
