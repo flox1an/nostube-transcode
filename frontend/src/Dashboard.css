@@ -105,6 +105,25 @@
   overflow-y: auto;
 }
 
+.dvm-detail-panel-container {
+  flex: 1;
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.no-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+}
+
+.no-selection p {
+  margin: 0;
+  font-size: 1rem;
+}
+
 /* Error message */
 .error-message {
   color: #f87171;

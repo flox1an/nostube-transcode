@@ -1,15 +1,33 @@
 import { useState, useCallback } from "react";
 import { useCurrentUser } from "./hooks/useCurrentUser";
 import { LoginDialog } from "./components/LoginDialog";
+import { DvmList, type UnifiedDvm } from "./components/DvmList";
+import { DvmDetailPanel } from "./components/DvmDetailPanel";
+import { PairDvmModal } from "./components/PairDvmModal";
 import "./Dashboard.css";
 
 export function Dashboard() {
   const { user, isLoggedIn, logout } = useCurrentUser();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [selectedDvm, setSelectedDvm] = useState<UnifiedDvm | null>(null);
+  const [showPairModal, setShowPairModal] = useState(false);
 
   const handleLogout = useCallback(() => {
     logout();
+    setSelectedDvm(null);
   }, [logout]);
+
+  const handleDvmSelect = useCallback((dvm: UnifiedDvm) => {
+    setSelectedDvm(dvm);
+  }, []);
+
+  const handlePairNew = useCallback(() => {
+    setShowPairModal(true);
+  }, []);
+
+  const handlePairComplete = useCallback(() => {
+    setShowPairModal(false);
+  }, []);
 
   // Not logged in - show login screen
   if (!isLoggedIn || !user) {
@@ -44,15 +62,31 @@ export function Dashboard() {
       <main className="dashboard-main">
         <div className="dashboard-content">
           <aside className="dvm-sidebar">
-            {/* DVM list with filter will go here */}
-            <p>DVM list placeholder</p>
+            <DvmList
+              userPubkey={user.pubkey}
+              selectedDvm={selectedDvm}
+              onSelect={handleDvmSelect}
+              onPairNew={handlePairNew}
+            />
           </aside>
-          <section className="dvm-detail-panel">
-            {/* Selected DVM detail will go here */}
-            <p>Select a DVM to view details</p>
+          <section className="dvm-detail-panel-container">
+            {selectedDvm ? (
+              <DvmDetailPanel dvm={selectedDvm} userPubkey={user.pubkey} />
+            ) : (
+              <div className="no-selection">
+                <p>Select a DVM from the list to view details</p>
+              </div>
+            )}
           </section>
         </div>
       </main>
+
+      {showPairModal && (
+        <PairDvmModal
+          onClose={() => setShowPairModal(false)}
+          onSuccess={handlePairComplete}
+        />
+      )}
     </div>
   );
 }
