@@ -25,16 +25,12 @@ services:
       - ./temp:/app/temp
 
     environment:
-      # Required
-      - NOSTR_PRIVATE_KEY=${NOSTR_PRIVATE_KEY}
-      - NOSTR_RELAYS=${NOSTR_RELAYS}
-      - BLOSSOM_UPLOAD_SERVERS=${BLOSSOM_UPLOAD_SERVERS}
-
       # Intel QSV - Use Intel Media Driver for AV1/HEVC hardware decode
       - LIBVA_DRIVER_NAME=iHD
 
       # Optional
-      - BLOSSOM_BLOB_EXPIRATION_DAYS=${BLOSSOM_BLOB_EXPIRATION_DAYS:-30}
+      - BOOTSTRAP_RELAYS=${BOOTSTRAP_RELAYS:-wss://relay.damus.io,wss://nos.lol}
+      - DVM_ADMIN_APP_URL=${DVM_ADMIN_APP_URL:-}
       - HTTP_PORT=3000
       - TEMP_DIR=/app/temp
       - RUST_LOG=${RUST_LOG:-info}

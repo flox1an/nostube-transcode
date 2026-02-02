@@ -1,0 +1,104 @@
+# Multi-stage build for DVM Video Processing with NVIDIA NVENC support
+# Requires: NVIDIA GPU, nvidia-container-toolkit on host
+
+# =============================================================================
+# Stage 1: Build the frontend (React/Vite)
+# =============================================================================
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+# Copy frontend package files
+COPY frontend/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy frontend source
+COPY frontend/ ./
+
+# Build production bundle
+RUN npm run build
+
+# =============================================================================
+# Stage 2: Build the Rust application
+# =============================================================================
+FROM rust:1.85-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy manifests first for better layer caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create dummy main.rs to build dependencies
+RUN mkdir -p src frontend/dist && \
+    echo "fn main() {}" > src/main.rs && \
+    touch frontend/dist/.keep
+
+# Build dependencies only
+RUN cargo build --release && rm -rf src target/release/deps/dvm*
+
+# Copy actual source code and frontend build
+COPY src ./src
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+# Build the application (embeds frontend via rust-embed)
+RUN cargo build --release
+
+# =============================================================================
+# Stage 3: Runtime image with FFmpeg + NVIDIA NVENC
+# =============================================================================
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install FFmpeg with NVENC support and runtime dependencies
+# Note: Ubuntu 24.04's ffmpeg includes NVENC support when CUDA libraries are present
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # FFmpeg with hardware acceleration
+    ffmpeg \
+    # Runtime dependencies
+    libssl3t64 \
+    ca-certificates \
+    curl \
+    # NVENC requires these CUDA libraries (already in base image, but explicit)
+    libnvidia-encode-550 \
+    libnvidia-decode-550 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 dvm
+
+WORKDIR /app
+
+# Copy the built binary
+COPY --from=builder /app/target/release/dvm-video-processing /usr/local/bin/dvm-video-processing
+
+# Create temp directory with proper permissions
+RUN mkdir -p /app/temp && chown -R dvm:dvm /app
+
+# Switch to non-root user
+USER dvm
+
+# Environment defaults
+ENV RUST_LOG=info
+ENV TEMP_DIR=/app/temp
+ENV HTTP_PORT=3000
+# NVIDIA runtime detection
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+
+EXPOSE 3000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost:3000/ || exit 1
+
+CMD ["dvm-video-processing"]
