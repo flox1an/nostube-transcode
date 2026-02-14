@@ -1,8 +1,9 @@
-//! Admin DM listener.
+//! Admin command listener.
 //!
-//! Subscribes to encrypted DMs from the admin and processes commands.
+//! Subscribes to kind 24207 ephemeral events (NIP-44 encrypted)
+//! and processes admin commands using NIP-46-style RPC format.
 
-use crate::admin::commands::{parse_command, serialize_response};
+use crate::admin::commands::{parse_request, AdminRequest, AdminResponseWire};
 use crate::admin::handler::AdminHandler;
 use crate::config::Config;
 use crate::dvm_state::SharedDvmState;
@@ -12,10 +13,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
-/// NIP-04 encrypted direct message kind
-const ENCRYPTED_DM_KIND: Kind = Kind::Custom(4);
+/// Admin RPC event kind (ephemeral range — relays don't store these)
+const ADMIN_RPC_KIND: Kind = Kind::Custom(24207);
 
-/// Starts listening for admin DMs and processes commands.
+/// Starts listening for admin commands and processes them.
 pub async fn run_admin_listener(
     client: Client,
     keys: Keys,
@@ -25,25 +26,25 @@ pub async fn run_admin_listener(
 ) {
     let handler = AdminHandler::new(state.clone(), client.clone(), pairing, config);
 
-    // Subscribe to encrypted DMs (NIP-04) addressed to us
+    // Subscribe to kind 24207 events addressed to us
     let filter = Filter::new()
-        .kind(ENCRYPTED_DM_KIND)
+        .kind(ADMIN_RPC_KIND)
         .pubkey(keys.public_key())
         .since(Timestamp::now());
 
     if let Err(e) = client.subscribe(vec![filter], None).await {
-        error!("Failed to subscribe to DMs: {}", e);
+        error!("Failed to subscribe to admin events: {}", e);
         return;
     }
 
-    info!("Listening for admin DMs...");
+    info!("Listening for admin commands (kind 24207)...");
 
     // Handle incoming events
     client
         .handle_notifications(|notification| async {
             if let RelayPoolNotification::Event { event, .. } = notification {
-                if event.kind == ENCRYPTED_DM_KIND {
-                    handle_dm(&event, &keys, &handler, &client).await;
+                if event.kind == ADMIN_RPC_KIND {
+                    handle_admin_event(&event, &keys, &handler, &client).await;
                 }
             }
             Ok(false) // Continue listening
@@ -52,18 +53,34 @@ pub async fn run_admin_listener(
         .ok();
 }
 
-async fn handle_dm(event: &Event, keys: &Keys, handler: &AdminHandler, client: &Client) {
-    // Decrypt NIP-04 message
-    let content = match nip04::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
+async fn handle_admin_event(
+    event: &Event,
+    keys: &Keys,
+    handler: &AdminHandler,
+    client: &Client,
+) {
+    // Decrypt NIP-44 content
+    let content = match nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
         Ok(c) => c,
         Err(e) => {
-            debug!("Failed to decrypt DM: {}", e);
+            debug!("Failed to decrypt admin event: {}", e);
             return;
         }
     };
 
-    // Parse command
-    let command = match parse_command(&content) {
+    // Parse v2 request format
+    let request: AdminRequest = match parse_request(&content) {
+        Ok(req) => req,
+        Err(e) => {
+            debug!("Failed to parse admin request: {}", e);
+            return;
+        }
+    };
+
+    let request_id = request.id.clone();
+
+    // Convert to internal command
+    let command = match request.to_command() {
         Ok(cmd) => {
             info!(
                 "Received admin command from {}: {:?}",
@@ -73,7 +90,18 @@ async fn handle_dm(event: &Event, keys: &Keys, handler: &AdminHandler, client: &
             cmd
         }
         Err(e) => {
-            debug!("Failed to parse command: {}", e);
+            debug!("Unknown admin method: {}", e);
+            // Send error response for unknown method
+            let wire = AdminResponseWire {
+                id: request_id,
+                result: None,
+                error: Some(e),
+            };
+            if let Ok(json) = serde_json::to_string(&wire) {
+                if let Err(e) = send_admin_response(client, keys, &event.pubkey, &json).await {
+                    error!("Failed to send error response: {}", e);
+                }
+            }
             return;
         }
     };
@@ -81,8 +109,9 @@ async fn handle_dm(event: &Event, keys: &Keys, handler: &AdminHandler, client: &
     // Process command
     let response = handler.handle(command, event.pubkey).await;
 
-    // Send response as encrypted DM
-    let response_json = match serialize_response(&response) {
+    // Wrap in v2 wire format
+    let wire = AdminResponseWire::from_response(request_id, response);
+    let response_json = match serde_json::to_string(&wire) {
         Ok(j) => j,
         Err(e) => {
             error!("Failed to serialize response: {}", e);
@@ -91,23 +120,26 @@ async fn handle_dm(event: &Event, keys: &Keys, handler: &AdminHandler, client: &
     };
 
     // Encrypt and send reply
-    if let Err(e) = send_encrypted_dm(client, keys, &event.pubkey, &response_json).await {
+    if let Err(e) = send_admin_response(client, keys, &event.pubkey, &response_json).await {
         error!("Failed to send response: {}", e);
     }
 }
 
-async fn send_encrypted_dm(
+async fn send_admin_response(
     client: &Client,
     keys: &Keys,
     recipient: &PublicKey,
     content: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let encrypted = nip04::encrypt(keys.secret_key(), recipient, content)?;
+    let encrypted = nip44::encrypt(
+        keys.secret_key(),
+        recipient,
+        content,
+        nip44::Version::default(),
+    )?;
 
-    // Build NIP-04 encrypted DM event
-    // Tags: p-tag for recipient
     let tags = vec![Tag::public_key(*recipient)];
-    let event = EventBuilder::new(ENCRYPTED_DM_KIND, encrypted, tags).to_event(keys)?;
+    let event = EventBuilder::new(ADMIN_RPC_KIND, encrypted, tags).to_event(keys)?;
 
     client.send_event(event).await?;
 
@@ -120,15 +152,17 @@ mod tests {
     use crate::admin::commands::AdminCommand;
 
     #[test]
-    fn test_parse_valid_command() {
-        let json = r#"{"cmd": "status"}"#;
-        let cmd = parse_command(json).unwrap();
+    fn test_parse_v2_request() {
+        let json = r#"{"id":"abc","method":"status","params":{}}"#;
+        let req = parse_request(json).unwrap();
+        assert_eq!(req.id, "abc");
+        let cmd = req.to_command().unwrap();
         assert!(matches!(cmd, AdminCommand::Status));
     }
 
     #[test]
-    fn test_parse_invalid_json() {
-        let result = parse_command("not json");
+    fn test_parse_v2_request_invalid() {
+        let result = parse_request("not json");
         assert!(result.is_err());
     }
 }
