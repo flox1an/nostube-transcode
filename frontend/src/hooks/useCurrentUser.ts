@@ -54,6 +54,8 @@ export function useCurrentUser() {
 
   const logout = () => {
     if (activeAccount && accountManager) {
+      // @ts-ignore
+      accountManager.clearActive();
       accountManager.removeAccount(activeAccount.pubkey)
     }
   }

@@ -1,7 +1,6 @@
 // frontend/src/components/DvmList.tsx
 import { useState, useEffect, useRef } from "react";
 import type { Event } from "nostr-tools";
-import { nip19 } from "nostr-tools";
 import { discoverDvms } from "../nostr/discovery";
 import {
   queryOperatorDvms,
@@ -12,6 +11,8 @@ import {
 } from "../nostr/admin";
 import { getCurrentSigner } from "../nostr/client";
 import { RELAYS } from "../nostr/constants";
+import { UserAvatar } from "./UserAvatar";
+import { UserName } from "./UserName";
 import "./DvmList.css";
 
 export type DvmFilter = "all" | "mine";
@@ -29,6 +30,7 @@ export interface UnifiedDvm {
   supportedModes?: string[];
   supportedResolutions?: string[];
   lastSeen?: number;
+  operatorPubkey?: string;
 }
 
 interface DvmListProps {
@@ -39,7 +41,7 @@ interface DvmListProps {
 }
 
 export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmListProps) {
-  const [filter, setFilter] = useState<DvmFilter>("all");
+  const [filter, setFilter] = useState<DvmFilter>("mine");
   const [allDvms, setAllDvms] = useState<UnifiedDvm[]>([]);
   const [myDvms, setMyDvms] = useState<Map<string, UnifiedDvm>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -63,6 +65,7 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
           supportedModes: d.supportedModes,
           supportedResolutions: d.supportedResolutions,
           lastSeen: d.lastSeen,
+          operatorPubkey: d.operatorPubkey,
         }));
 
         setAllDvms(unified);
@@ -98,6 +101,7 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
           relays: RELAYS,
           isOwned: true,
           statusLoading: true,
+          operatorPubkey: metadata.operatorPubkey,
         };
 
         setMyDvms((prev) => {
@@ -190,15 +194,6 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
         return owned ? { ...d, ...owned, isOwned: true } : d;
       });
 
-  const formatPubkey = (pubkey: string): string => {
-    try {
-      const npub = nip19.npubEncode(pubkey);
-      return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
-    } catch {
-      return `${pubkey.slice(0, 8)}...${pubkey.slice(-8)}`;
-    }
-  };
-
   const formatLastSeen = (timestamp?: number) => {
     if (!timestamp) return "";
     const diff = Math.floor(Date.now() / 1000 - timestamp);
@@ -213,16 +208,16 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
       <div className="dvm-list-header">
         <div className="filter-toggle">
           <button
-            className={filter === "all" ? "active" : ""}
-            onClick={() => setFilter("all")}
-          >
-            All DVMs
-          </button>
-          <button
             className={filter === "mine" ? "active" : ""}
             onClick={() => setFilter("mine")}
           >
             My DVMs
+          </button>
+          <button
+            className={filter === "all" ? "active" : ""}
+            onClick={() => setFilter("all")}
+          >
+            All DVMs
           </button>
         </div>
         {filter === "mine" && (
@@ -259,21 +254,35 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
             className={`dvm-list-item ${selectedDvm?.pubkey === dvm.pubkey ? "selected" : ""} ${dvm.isOwned ? "owned" : ""}`}
             onClick={() => onSelect(dvm)}
           >
-            <div className="dvm-item-header">
-              <span className="dvm-name">{dvm.name}</span>
-              {dvm.isOwned && (
-                <span className={`status-badge ${dvm.status?.paused ? "paused" : "active"}`}>
-                  {dvm.statusLoading ? "..." : dvm.status?.paused ? "Paused" : "Active"}
-                </span>
-              )}
+            <div className="dvm-item-main">
+              <UserAvatar pubkey={dvm.pubkey} size={32} className="dvm-avatar" />
+              <div className="dvm-item-details">
+                <div className="dvm-item-header">
+                  <span className="dvm-name">
+                    {dvm.isOwned && <span className="manage-badge">Admin</span>}
+                    {dvm.name || <UserName pubkey={dvm.pubkey} />}
+                  </span>
+                  {dvm.isOwned && (
+                    <span className={`status-indicator ${dvm.status?.paused ? "paused" : "active"}`}>
+                    </span>
+                  )}
+                </div>
+                <div className="dvm-item-about">{dvm.about || "No description"}</div>
+                <div className="dvm-item-meta">
+                  <span className="dvm-pubkey"><UserName pubkey={dvm.pubkey} /></span>
+                  {dvm.lastSeen && (
+                    <span className="dvm-last-seen">{formatLastSeen(dvm.lastSeen)}</span>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="dvm-item-about">{dvm.about || "No description"}</div>
-            <div className="dvm-item-meta">
-              <span className="dvm-pubkey">{formatPubkey(dvm.pubkey)}</span>
-              {dvm.lastSeen && (
-                <span className="dvm-last-seen">{formatLastSeen(dvm.lastSeen)}</span>
-              )}
-            </div>
+            {dvm.isOwned && dvm.status && (
+              <div className="dvm-item-stats">
+                <span>{dvm.status.jobs_active} active</span>
+                <span>•</span>
+                <span>{dvm.status.jobs_completed} done</span>
+              </div>
+            )}
           </div>
         ))}
       </div>

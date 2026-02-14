@@ -40,7 +40,7 @@ impl SubscriptionManager {
         let dvm_pubkey = self.config.nostr_keys.public_key();
         let filter = Filter::new()
             .kind(DVM_VIDEO_TRANSFORM_REQUEST_KIND)
-            .pubkey(dvm_pubkey)
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::P), [dvm_pubkey.to_hex()])
             .since(Timestamp::now());
 
         self.client.subscribe(vec![filter], None).await?;

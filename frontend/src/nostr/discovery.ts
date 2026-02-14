@@ -13,6 +13,7 @@ export interface DvmService {
   supportedModes: string[];
   supportedResolutions: string[];
   lastSeen: number;
+  operatorPubkey?: string;
 }
 
 /**
@@ -41,6 +42,9 @@ function parseAnnouncementEvent(event: Event): DvmService | null {
   const nameTag = event.tags.find((t) => t[0] === "name");
   const aboutTag = event.tags.find((t) => t[0] === "about");
   const relaysTag = event.tags.find((t) => t[0] === "relays");
+  const operatorTag = event.tags.find(
+    (t) => t[0] === "p" && t[3] === "operator"
+  );
 
   // Extract supported params
   const modeTag = event.tags.find(
@@ -50,7 +54,7 @@ function parseAnnouncementEvent(event: Event): DvmService | null {
     (t) => t[0] === "param" && t[1] === "resolution"
   );
 
-  const result = {
+  const result: DvmService = {
     pubkey: event.pubkey,
     name: nameTag?.[1] || "Unknown DVM",
     about: aboutTag?.[1] || "",
@@ -58,6 +62,7 @@ function parseAnnouncementEvent(event: Event): DvmService | null {
     supportedModes: modeTag?.slice(2) || ["mp4", "hls"],
     supportedResolutions: resolutionTag?.slice(2) || ["360p", "720p", "1080p"],
     lastSeen: event.created_at,
+    operatorPubkey: operatorTag?.[1],
   };
   
   console.log("[parseAnnouncementEvent] Parsed successfully:", result);

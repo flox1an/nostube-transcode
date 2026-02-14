@@ -1,6 +1,5 @@
 // frontend/src/components/DvmDetailPanel.tsx
 import { useState, useEffect, useCallback, useRef } from "react";
-import { nip19 } from "nostr-tools";
 import type { Event } from "nostr-tools";
 import type { UnifiedDvm } from "./DvmList";
 import {
@@ -21,6 +20,9 @@ import { VideoPlayer } from "./VideoPlayer";
 import { EventDisplay } from "./EventDisplay";
 import { publishTransformRequest, subscribeToResponses } from "../nostr/client";
 import { parseStatusEvent, parseResultEvent, type DvmResult } from "../nostr/events";
+import { UserAvatar } from "./UserAvatar";
+import { UserName } from "./UserName";
+import { IconClock, IconRefresh, IconCheckCircle, IconXCircle } from "./Icons";
 import "./DvmDetailPanel.css";
 
 type TabType = "overview" | "config" | "transcode" | "system";
@@ -48,7 +50,21 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
   // Config editing
   const [editingConfig, setEditingConfig] = useState(false);
-  const [configForm, setConfigForm] = useState<Partial<DvmConfig>>({});
+  const [formName, setFormName] = useState("");
+  const [formAbout, setFormAbout] = useState("");
+  const [formRelays, setFormRelays] = useState("");
+  const [formBlossom, setFormBlossom] = useState("");
+  const [formExpiration, setFormExpiration] = useState("");
+
+  const startEditing = useCallback(() => {
+    if (!config) return;
+    setFormName(config.name || "");
+    setFormAbout(config.about || "");
+    setFormRelays(config.relays.join("\n"));
+    setFormBlossom(config.blossom_servers.join("\n"));
+    setFormExpiration(config.blob_expiration_days.toString());
+    setEditingConfig(true);
+  }, [config]);
 
   // Transcode state
   const [transcodeState, setTranscodeState] = useState<"idle" | "submitting" | "processing" | "complete" | "error">("idle");
@@ -76,7 +92,6 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
       const dashboard = data as unknown as DvmDashboard;
       setStatus(dashboard.status);
       setConfig(dashboard.config);
-      setConfigForm(dashboard.config);
       setJobs(dashboard.jobs);
     }
     // Status response (from status, pause, or resume commands)
@@ -87,7 +102,6 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
     else if ("config" in data) {
       const cfg = data.config as DvmConfig;
       setConfig(cfg);
-      setConfigForm(cfg);
     }
     // Job history response
     else if ("jobs" in data) {
@@ -149,25 +163,29 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
   const handleSaveConfig = useCallback(async () => {
     const signer = getCurrentSigner();
-    if (!signer || !configForm) return;
+    if (!signer) return;
 
     setActionLoading(true);
     try {
+      const relays = formRelays.split("\n").map(r => r.trim()).filter(r => r);
+      const blossom = formBlossom.split("\n").map(s => s.trim()).filter(s => s);
+      const expiration = parseInt(formExpiration, 10);
+
       await sendAdminCommand(signer, dvm.pubkey, "set_config", {
-        relays: configForm.relays && configForm.relays.length > 0 ? configForm.relays : undefined,
-        blossom_servers: configForm.blossom_servers && configForm.blossom_servers.length > 0 ? configForm.blossom_servers : undefined,
-        blob_expiration_days: configForm.blob_expiration_days,
-        name: configForm.name,
-        about: configForm.about,
+        relays: relays.length > 0 ? relays : undefined,
+        blossom_servers: blossom.length > 0 ? blossom : undefined,
+        blob_expiration_days: isNaN(expiration) ? undefined : expiration,
+        name: formName || undefined,
+        about: formAbout || undefined,
       }, RELAYS);
-      // Config will be updated via the response handler (set_config returns updated config)
+      
       setEditingConfig(false);
       setTimeout(() => setActionLoading(false), 1000);
     } catch (err) {
       console.error("Failed to save config:", err);
       setActionLoading(false);
     }
-  }, [dvm.pubkey, configForm]);
+  }, [dvm.pubkey, formName, formAbout, formRelays, formBlossom, formExpiration]);
 
   // Transcode handlers
   const handleTranscodeSubmit = useCallback(async (
@@ -255,14 +273,6 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
     setResponseEvent(null);
   }, []);
 
-  const getNpub = (pubkey: string): string => {
-    try {
-      return nip19.npubEncode(pubkey);
-    } catch {
-      return pubkey;
-    }
-  };
-
   const formatUptime = (secs: number): string => {
     const days = Math.floor(secs / 86400);
     const hours = Math.floor((secs % 86400) / 3600);
@@ -281,8 +291,15 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
     return (
       <div className="dvm-detail-panel">
         <div className="dvm-detail-header">
-          <h2>{dvm.name}</h2>
-          <code className="npub">{getNpub(dvm.pubkey)}</code>
+          <div className="header-left">
+            <div className="title-with-avatar">
+              <UserAvatar pubkey={dvm.pubkey} size={48} />
+              <div className="title-text">
+                <h2>{dvm.name || <UserName pubkey={dvm.pubkey} />}</h2>
+                <code className="npub"><UserName pubkey={dvm.pubkey} /></code>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="public-dvm-info">
           <p className="dvm-about">{dvm.about || "No description"}</p>
@@ -292,9 +309,17 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
           {dvm.supportedResolutions && (
             <p><strong>Resolutions:</strong> {dvm.supportedResolutions.join(", ")}</p>
           )}
-          <p className="not-owned-notice">
-            You don't operate this DVM. Switch to "My DVMs" to manage your own DVMs.
-          </p>
+          <div className="not-owned-notice">
+            <p>You don't operate this DVM.</p>
+            {dvm.operatorPubkey && (
+              <div className="operator-info">
+                <span>Operated by:</span>
+                <UserAvatar pubkey={dvm.operatorPubkey} size={24} />
+                <UserName pubkey={dvm.operatorPubkey} />
+              </div>
+            )}
+            <p className="switch-notice">Switch to "My DVMs" to manage your own DVMs.</p>
+          </div>
         </div>
       </div>
     );
@@ -305,8 +330,13 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
     <div className="dvm-detail-panel">
       <div className="dvm-detail-header">
         <div className="header-left">
-          <h2>{config?.name || dvm.name}</h2>
-          <code className="npub">{getNpub(dvm.pubkey)}</code>
+          <div className="title-with-avatar">
+            <UserAvatar pubkey={dvm.pubkey} size={48} />
+            <div className="title-text">
+              <h2>{config?.name || dvm.name || <UserName pubkey={dvm.pubkey} />}</h2>
+              <code className="npub"><UserName pubkey={dvm.pubkey} /></code>
+            </div>
+          </div>
         </div>
         <div className="header-actions">
           {status && (
@@ -353,33 +383,67 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
               <>
                 <div className="stats-grid">
                   <div className="stat-card">
-                    <h3>Uptime</h3>
-                    <p className="stat-value">{formatUptime(status.uptime_secs)}</p>
+                    <div className="stat-icon uptime-icon"><IconClock /></div>
+                    <div className="stat-content">
+                      <h3>Uptime</h3>
+                      <p className="stat-value">{formatUptime(status.uptime_secs)}</p>
+                    </div>
                   </div>
                   <div className="stat-card">
-                    <h3>Active Jobs</h3>
-                    <p className="stat-value">{status.jobs_active}</p>
+                    <div className="stat-icon active-icon"><IconRefresh /></div>
+                    <div className="stat-content">
+                      <h3>Active Jobs</h3>
+                      <p className="stat-value">{status.jobs_active}</p>
+                    </div>
                   </div>
                   <div className="stat-card">
-                    <h3>Completed</h3>
-                    <p className="stat-value">{status.jobs_completed}</p>
+                    <div className="stat-icon complete-icon"><IconCheckCircle /></div>
+                    <div className="stat-content">
+                      <h3>Completed</h3>
+                      <p className="stat-value">{status.jobs_completed}</p>
+                    </div>
                   </div>
                   <div className="stat-card">
-                    <h3>Failed</h3>
-                    <p className="stat-value">{status.jobs_failed}</p>
+                    <div className="stat-icon failed-icon"><IconXCircle /></div>
+                    <div className="stat-content">
+                      <h3>Failed</h3>
+                      <p className="stat-value">{status.jobs_failed}</p>
+                    </div>
                   </div>
                 </div>
 
-                {status.hwaccel && (
+                <div className="overview-info-grid">
                   <div className="info-section">
-                    <h3>Hardware Acceleration</h3>
-                    <p>{status.hwaccel}</p>
+                    <h3>Performance</h3>
+                    <div className="performance-stats">
+                      <div className="perf-item">
+                        <span className="label">Total Jobs:</span>
+                        <span className="value">{status.jobs_completed + status.jobs_failed + status.jobs_active}</span>
+                      </div>
+                      <div className="perf-item">
+                        <span className="label">Success Rate:</span>
+                        <span className="value">
+                          {status.jobs_completed + status.jobs_failed > 0 
+                            ? `${Math.round((status.jobs_completed / (status.jobs_completed + status.jobs_failed)) * 100)}%`
+                            : "N/A"}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                )}
 
-                <div className="info-section">
-                  <h3>Version</h3>
-                  <p>{status.version}</p>
+                  <div className="info-section">
+                    <h3>System</h3>
+                    <div className="system-details">
+                      <div className="sys-item">
+                        <span className="label">HW Acceleration:</span>
+                        <span className="value accent">{status.hwaccel || "None"}</span>
+                      </div>
+                      <div className="sys-item">
+                        <span className="label">Version:</span>
+                        <span className="value">{status.version}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </>
             )}
@@ -443,7 +507,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
                   <p>{config.blob_expiration_days} days</p>
                 </div>
 
-                <button className="edit-btn" onClick={() => setEditingConfig(true)}>
+                <button className="edit-btn" onClick={startEditing}>
                   Edit Configuration
                 </button>
               </>
@@ -453,57 +517,50 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
                   <label>Name</label>
                   <input
                     type="text"
-                    value={configForm.name || ""}
-                    onChange={(e) => setConfigForm({ ...configForm, name: e.target.value })}
+                    placeholder="DVM Name"
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
                   />
                 </div>
 
                 <div className="form-group">
                   <label>About</label>
                   <textarea
-                    value={configForm.about || ""}
-                    onChange={(e) => setConfigForm({ ...configForm, about: e.target.value })}
+                    placeholder="Describe your DVM..."
+                    value={formAbout}
+                    onChange={(e) => setFormAbout(e.target.value)}
                   />
                 </div>
 
                 <div className="form-group">
                   <label>Relays (one per line)</label>
                   <textarea
-                    value={configForm.relays?.join("\n") || ""}
-                    onChange={(e) =>
-                      setConfigForm({
-                        ...configForm,
-                        relays: e.target.value.split("\n").filter((r) => r.trim()),
-                      })
-                    }
+                    placeholder="wss://relay.damus.io"
+                    value={formRelays}
+                    onChange={(e) => setFormRelays(e.target.value)}
                   />
+                  <p className="form-help">Enter one Nostr relay URL per line. These are the relays the DVM listens on.</p>
                 </div>
 
                 <div className="form-group">
                   <label>Blossom Servers (one per line)</label>
                   <textarea
-                    value={configForm.blossom_servers?.join("\n") || ""}
-                    onChange={(e) =>
-                      setConfigForm({
-                        ...configForm,
-                        blossom_servers: e.target.value.split("\n").filter((s) => s.trim()),
-                      })
-                    }
+                    placeholder="https://blossom.example.com"
+                    value={formBlossom}
+                    onChange={(e) => setFormBlossom(e.target.value)}
                   />
+                  <p className="form-help">Enter one Blossom server URL per line. These are where transformed videos are uploaded.</p>
                 </div>
 
                 <div className="form-group">
                   <label>Blob Expiration (days)</label>
                   <input
                     type="number"
-                    value={configForm.blob_expiration_days || 30}
-                    onChange={(e) =>
-                      setConfigForm({
-                        ...configForm,
-                        blob_expiration_days: parseInt(e.target.value, 10),
-                      })
-                    }
+                    min="1"
+                    value={formExpiration}
+                    onChange={(e) => setFormExpiration(e.target.value)}
                   />
+                  <p className="form-help">Number of days before uploaded video segments expire on Blossom servers.</p>
                 </div>
 
                 <div className="form-actions">
@@ -512,7 +569,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
                   </button>
                   <button
                     className="cancel-btn"
-                    onClick={() => { setEditingConfig(false); setConfigForm(config); }}
+                    onClick={() => setEditingConfig(false)}
                     disabled={actionLoading}
                   >
                     Cancel

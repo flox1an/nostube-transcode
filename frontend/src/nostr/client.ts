@@ -1,8 +1,10 @@
 import type { Event, Filter } from "nostr-tools";
 import type { ISigner } from "applesauce-signers";
+import { mapEventsToStore } from "applesauce-core";
+import { filter as rxFilter } from "rxjs";
 import { KIND_DVM_STATUS, KIND_DVM_RESULT, RELAYS } from "./constants";
 import { buildTransformRequest, buildEncryptedTransformRequest, type OutputMode, type Resolution, type Codec, type HlsResolution } from "./events";
-import { relayPool } from "./core";
+import { relayPool, eventStore } from "./core";
 import { accountManager } from "../providers/AppProviders";
 
 export interface PublishResult {
@@ -15,6 +17,26 @@ export interface PublishResult {
  */
 export function getCurrentSigner(): ISigner | undefined {
   return accountManager.signer;
+}
+
+/**
+ * Subscribe to metadata for a list of pubkeys
+ */
+export function subscribeToMetadata(pubkeys: string[], relays: string[] = RELAYS): () => void {
+  if (pubkeys.length === 0) return () => {};
+
+  const subscription = relayPool
+    .subscription(relays, {
+      kinds: [0],
+      authors: pubkeys,
+    })
+    .pipe(
+      rxFilter((response): response is Event => typeof response !== "string" && "kind" in response),
+      mapEventsToStore(eventStore, true)
+    )
+    .subscribe();
+
+  return () => subscription.unsubscribe();
 }
 
 /**

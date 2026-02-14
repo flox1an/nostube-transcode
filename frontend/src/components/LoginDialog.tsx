@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { nip19 } from "nostr-tools";
 import { useCurrentUser } from "../hooks/useCurrentUser";
+import { IconCpu, IconDatabase, IconKey, IconAlertTriangle, IconFileText } from "./Icons";
 
 type LoginMethod = "extension" | "nsec" | "bunker";
 
@@ -110,32 +111,32 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
           className={`login-tab ${activeTab === "extension" ? "active" : ""}`}
           onClick={() => setActiveTab("extension")}
         >
-          Extension
-        </button>
-        <button
-          className={`login-tab ${activeTab === "nsec" ? "active" : ""}`}
-          onClick={() => setActiveTab("nsec")}
-        >
-          Nsec
+          <IconCpu className="tab-icon" /> Extension
         </button>
         <button
           className={`login-tab ${activeTab === "bunker" ? "active" : ""}`}
           onClick={() => setActiveTab("bunker")}
         >
-          Bunker
+          <IconDatabase className="tab-icon" /> Bunker
+        </button>
+        <button
+          className={`login-tab ${activeTab === "nsec" ? "active" : ""}`}
+          onClick={() => setActiveTab("nsec")}
+        >
+          <IconKey className="tab-icon" /> Nsec
         </button>
       </div>
 
       <div className="login-content">
         {activeTab === "extension" && (
           <div className="login-method">
-            <div className="method-icon">🔐</div>
+            <h3 className="method-title">Browser Extension</h3>
             <p className="method-description">
-              Sign in securely using a browser extension like Alby or nos2x.
-              Your keys never leave your extension.
+              Sign in securely using <strong>Alby</strong>, <strong>nos2x</strong>, or <strong>Flamingo</strong>.
+              Your keys are never shared with this application.
             </p>
             <button
-              className="login-button"
+              className="login-button primary"
               onClick={handleExtensionLogin}
               disabled={isLoading}
             >
@@ -146,12 +147,13 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
         {activeTab === "nsec" && (
           <div className="login-method">
-            <div className="method-icon">🔑</div>
-            <p className="method-description">
-              Enter your Nostr secret key (nsec). Warning: This stores your key
-              in memory during the session.
-            </p>
+            <h3 className="method-title">Secret Key</h3>
+            <div className="method-warning">
+              <IconAlertTriangle className="warning-icon" />
+              <p>Entering your <strong>nsec</strong> is less secure. Use an extension or bunker if possible.</p>
+            </div>
             <div className="input-group">
+              <label>Your nsec key</label>
               <input
                 type="password"
                 value={nsec}
@@ -161,7 +163,6 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
               />
             </div>
             <div className="file-upload-section">
-              <p className="upload-text">Or upload a key file:</p>
               <input
                 type="file"
                 accept=".txt"
@@ -170,14 +171,14 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
                 onChange={handleFileUpload}
               />
               <button
-                className="upload-button"
+                className="upload-link"
                 onClick={() => fileInputRef.current?.click()}
               >
-                Upload nsec file
+                <IconFileText width={16} height={16} /> Import from .txt file
               </button>
             </div>
             <button
-              className="login-button"
+              className="login-button primary"
               onClick={handleNsecLogin}
               disabled={isLoading || !nsec.trim()}
             >
@@ -188,33 +189,32 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
         {activeTab === "bunker" && (
           <div className="login-method">
-            <div className="method-icon">🏰</div>
+            <h3 className="method-title">Nostr Connect</h3>
             <p className="method-description">
-              Connect to a remote signer using NIP-46 bunker protocol. Paste
-              your bunker:// URI below.
+              Use a remote signer via <strong>NIP-46</strong>. Provide your bunker address or connection URI.
             </p>
             <div className="input-group">
+              <label>Bunker URI</label>
               <input
                 type="text"
                 value={bunkerUri}
                 onChange={(e) => setBunkerUri(e.target.value)}
-                placeholder="bunker://..."
+                placeholder="bunker://... or npub@domain.com"
                 className="login-input"
               />
-              {bunkerUri && !bunkerUri.startsWith("bunker://") && (
-                <p className="input-error">URI must start with bunker://</p>
+              {bunkerUri && !bunkerUri.startsWith("bunker://") && !bunkerUri.includes("@") && (
+                <p className="input-error">Invalid bunker format</p>
               )}
             </div>
             <button
-              className="login-button"
+              className="login-button primary"
               onClick={handleBunkerLogin}
               disabled={
                 isLoading ||
-                !bunkerUri.trim() ||
-                !bunkerUri.startsWith("bunker://")
+                !bunkerUri.trim()
               }
             >
-              {isLoading ? "Connecting..." : "Login with Bunker"}
+              {isLoading ? "Connecting..." : "Connect to Bunker"}
             </button>
           </div>
         )}

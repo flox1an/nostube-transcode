@@ -2,10 +2,11 @@ use tokio::signal;
 use tracing::info;
 
 use dvm_video_processing::admin::run_admin_listener;
-use dvm_video_processing::dvm::AnnouncementPublisher;
-use dvm_video_processing::nostr::EventPublisher;
+use dvm_video_processing::blossom::BlossomClient;
+use dvm_video_processing::dvm::{AnnouncementPublisher, JobHandler};
+use dvm_video_processing::nostr::{EventPublisher, SubscriptionManager};
 use dvm_video_processing::startup::initialize;
-use dvm_video_processing::video::HwAccel;
+use dvm_video_processing::video::{HwAccel, VideoProcessor};
 use dvm_video_processing::web::run_server;
 use std::sync::Arc;
 
@@ -92,8 +93,44 @@ async fn main() -> anyhow::Result<()> {
         announcement_publisher.run().await;
     });
 
-    // For now, just wait in this mode (full integration would
-    // create job handler etc from startup.state)
+    // Create job processing channel
+    let (job_tx, job_rx) = tokio::sync::mpsc::channel(32);
+
+    // Spawn subscription manager (listens for kind 5207 requests)
+    let subscription_handle = tokio::spawn({
+        let config = startup.config.clone();
+        async move {
+            match SubscriptionManager::new(config).await {
+                Ok(manager) => {
+                    if let Err(e) = manager.run(job_tx).await {
+                        tracing::error!("Subscription manager error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create subscription manager: {}", e);
+                }
+            }
+        }
+    });
+
+    // Spawn job handler
+    let job_publisher = Arc::new(EventPublisher::new(
+        startup.config.clone(),
+        startup.client.clone(),
+    ));
+    let blossom = Arc::new(BlossomClient::new(startup.config.clone()));
+    let processor = Arc::new(VideoProcessor::new(startup.config.clone()));
+    let job_handler = JobHandler::new(
+        startup.config.clone(),
+        job_publisher,
+        blossom,
+        processor,
+    );
+
+    let job_handle = tokio::spawn(async move {
+        job_handler.run(job_rx).await;
+    });
+
     info!("Remote config mode active. Press Ctrl+C to shutdown.");
     shutdown_signal().await;
 
@@ -101,6 +138,8 @@ async fn main() -> anyhow::Result<()> {
     web_handle.abort();
     admin_handle.abort();
     announcement_handle.abort();
+    subscription_handle.abort();
+    job_handle.abort();
     let _ = startup.client.disconnect().await;
 
     info!("Shutdown complete");

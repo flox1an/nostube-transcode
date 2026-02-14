@@ -109,9 +109,12 @@ export function VideoForm({ onSubmit, disabled }: VideoFormProps) {
                 onClick={() => setCodec("h265")}
                 disabled={disabled}
               >
-                H.265
+                H.265 (HEVC)
               </button>
             </div>
+            <span className="field-hint">
+              {codec === "h265" ? "Better quality, smaller size" : "Wide compatibility"}
+            </span>
           </div>
 
           {mode === "mp4" && (
@@ -123,17 +126,18 @@ export function VideoForm({ onSubmit, disabled }: VideoFormProps) {
                 disabled={disabled}
                 className="resolution-dropdown"
               >
-                <option value="360p">360p</option>
-                <option value="480p">480p</option>
-                <option value="720p">720p</option>
-                <option value="1080p">1080p</option>
+                <option value="360p">360p (Mobile)</option>
+                <option value="480p">480p (SD)</option>
+                <option value="720p">720p (HD)</option>
+                <option value="1080p">1080p (Full HD)</option>
               </select>
+              <span className="field-hint">Fixed target resolution</span>
             </div>
           )}
 
           {mode === "hls" && (
             <div className="form-field">
-              <label className="field-label">Encryption</label>
+              <label className="field-label">Security</label>
               <div className="toggle-buttons">
                 <button
                   type="button"
@@ -141,7 +145,7 @@ export function VideoForm({ onSubmit, disabled }: VideoFormProps) {
                   onClick={() => setEncryption(true)}
                   disabled={disabled}
                 >
-                  On
+                  AES-128
                 </button>
                 <button
                   type="button"
@@ -149,11 +153,11 @@ export function VideoForm({ onSubmit, disabled }: VideoFormProps) {
                   onClick={() => setEncryption(false)}
                   disabled={disabled}
                 >
-                  Off
+                  None
                 </button>
               </div>
               <span className="field-hint">
-                {encryption ? "AES-128" : "fMP4"}
+                {encryption ? "Encrypted segments" : "Plain fMP4 segments"}
               </span>
             </div>
           )}

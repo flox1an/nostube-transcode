@@ -87,6 +87,17 @@ impl AdminHandler {
             AdminCommand::Resume => self.handle_resume().await,
             AdminCommand::Status => self.handle_status().await,
             AdminCommand::JobHistory { limit } => self.handle_job_history(limit).await,
+            AdminCommand::GetDashboard { limit } => self.handle_get_dashboard(limit).await,
+            AdminCommand::SetConfig {
+                relays,
+                blossom_servers,
+                blob_expiration_days,
+                name,
+                about,
+            } => {
+                self.handle_set_config(relays, blossom_servers, blob_expiration_days, name, about)
+                    .await
+            }
             AdminCommand::SelfTest => self.handle_self_test().await,
             AdminCommand::SystemInfo => self.handle_system_info().await,
             AdminCommand::ImportEnvConfig => self.handle_import_env_config().await,
@@ -241,7 +252,7 @@ impl AdminHandler {
         }
     }
 
-    /// Handles the Pause command.
+    /// Handles the Pause command. Returns status in the response.
     async fn handle_pause(&self) -> AdminResponse {
         let result = {
             let mut state = self.state.write().await;
@@ -253,12 +264,12 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg("DVM paused"),
+            Ok(_) => self.handle_status().await,
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
 
-    /// Handles the Resume command.
+    /// Handles the Resume command. Returns status in the response.
     async fn handle_resume(&self) -> AdminResponse {
         let result = {
             let mut state = self.state.write().await;
@@ -270,7 +281,7 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg("DVM resumed"),
+            Ok(_) => self.handle_status().await,
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -317,6 +328,120 @@ impl AdminHandler {
             .collect();
 
         AdminResponse::ok_with_data(ResponseData::JobHistory(JobHistoryResponse { jobs }))
+    }
+
+    /// Handles the GetDashboard command.
+    ///
+    /// Returns status, config, and recent jobs in a single response.
+    async fn handle_get_dashboard(&self, limit: u32) -> AdminResponse {
+        let state = self.state.read().await;
+
+        let status = StatusResponse {
+            paused: state.config.paused,
+            jobs_active: state.jobs_active,
+            jobs_completed: state.jobs_completed,
+            jobs_failed: state.jobs_failed,
+            uptime_secs: state.uptime_secs(),
+            hwaccel: state.hwaccel.clone().unwrap_or_else(|| "none".to_string()),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+
+        let config = ConfigData {
+            relays: state.config.relays.clone(),
+            blossom_servers: state.config.blossom_servers.clone(),
+            blob_expiration_days: state.config.blob_expiration_days,
+            name: state.config.name.clone(),
+            about: state.config.about.clone(),
+            paused: state.config.paused,
+        };
+
+        let history = state.get_job_history(limit as usize);
+        let jobs: Vec<JobInfo> = history
+            .into_iter()
+            .map(|record| {
+                let duration_secs = record
+                    .completed_at
+                    .map(|end| end.saturating_sub(record.started_at));
+                JobInfo {
+                    id: record.id.clone(),
+                    status: record.status.to_string(),
+                    input_url: record.input_url.clone(),
+                    output_url: record.output_url.clone(),
+                    started_at: format_timestamp(record.started_at),
+                    completed_at: record.completed_at.map(format_timestamp),
+                    duration_secs,
+                }
+            })
+            .collect();
+
+        AdminResponse::ok_with_data(ResponseData::Dashboard(DashboardResponse {
+            status,
+            config,
+            jobs,
+        }))
+    }
+
+    /// Handles the SetConfig command.
+    ///
+    /// Applies all provided config fields and returns the updated config.
+    async fn handle_set_config(
+        &self,
+        relays: Option<Vec<String>>,
+        blossom_servers: Option<Vec<String>>,
+        blob_expiration_days: Option<u32>,
+        name: Option<String>,
+        about: Option<String>,
+    ) -> AdminResponse {
+        // Validate relay URLs if provided
+        if let Some(ref relays) = relays {
+            for relay in relays {
+                if !relay.starts_with("wss://") && !relay.starts_with("ws://") {
+                    return AdminResponse::error(format!("Invalid relay URL: {}", relay));
+                }
+            }
+        }
+
+        // Validate server URLs if provided
+        if let Some(ref servers) = blossom_servers {
+            for server in servers {
+                if !server.starts_with("https://") && !server.starts_with("http://") {
+                    return AdminResponse::error(format!("Invalid server URL: {}", server));
+                }
+            }
+        }
+
+        if let Some(days) = blob_expiration_days {
+            if days == 0 {
+                return AdminResponse::error("Expiration days must be greater than 0");
+            }
+        }
+
+        let result = {
+            let mut state = self.state.write().await;
+
+            if let Some(r) = relays {
+                state.config.relays = r;
+            }
+            if let Some(s) = blossom_servers {
+                state.config.blossom_servers = s;
+            }
+            if let Some(d) = blob_expiration_days {
+                state.config.blob_expiration_days = d;
+            }
+            if let Some(n) = name {
+                state.config.name = Some(n);
+            }
+            if let Some(a) = about {
+                state.config.about = Some(a);
+            }
+
+            save_config(&self.client, &state.keys, &state.config).await
+        };
+
+        match result {
+            Ok(_) => self.handle_get_config().await,
+            Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
+        }
     }
 
     /// Handles the SelfTest command.

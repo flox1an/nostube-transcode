@@ -114,6 +114,7 @@ impl BlossomClient {
         debug!(path = %path.display(), sha256 = %sha256, "Uploading file to all servers");
 
         let mut results = Vec::new();
+        let mut errors = Vec::new();
 
         for server in &self.config.blossom_servers {
             let upload_start = Instant::now();
@@ -135,14 +136,16 @@ impl BlossomClient {
                 }
                 Err(e) => {
                     warn!(server = %server, error = %e, "Upload failed");
+                    errors.push(format!("{}: {}", server, e));
                 }
             }
         }
 
         if results.is_empty() {
-            return Err(BlossomError::UploadFailed(
-                "All server uploads failed".into(),
-            ));
+            return Err(BlossomError::UploadFailed(format!(
+                "All server uploads failed: [{}]",
+                errors.join(", ")
+            )));
         }
 
         Ok(results)
@@ -177,6 +180,7 @@ impl BlossomClient {
         debug!(path = %path.display(), sha256 = %sha256, "Uploading file to all servers");
 
         let mut results = Vec::new();
+        let mut errors = Vec::new();
 
         for server in &self.config.blossom_servers {
             let upload_start = Instant::now();
@@ -208,14 +212,16 @@ impl BlossomClient {
                 }
                 Err(e) => {
                     warn!(server = %server, error = %e, "Upload failed");
+                    errors.push(format!("{}: {}", server, e));
                 }
             }
         }
 
         if results.is_empty() {
-            return Err(BlossomError::UploadFailed(
-                "All server uploads failed".into(),
-            ));
+            return Err(BlossomError::UploadFailed(format!(
+                "All server uploads failed: [{}]",
+                errors.join(", ")
+            )));
         }
 
         Ok(results)
@@ -236,6 +242,7 @@ impl BlossomClient {
         debug!(path = %path.display(), sha256 = %sha256, "Uploading file with progress tracking");
 
         let mut results = Vec::new();
+        let mut errors = Vec::new();
 
         for server in &self.config.blossom_servers {
             let upload_start = Instant::now();
@@ -263,14 +270,16 @@ impl BlossomClient {
                 }
                 Err(e) => {
                     warn!(server = %server, error = %e, "Upload failed");
+                    errors.push(format!("{}: {}", server, e));
                 }
             }
         }
 
         if results.is_empty() {
-            return Err(BlossomError::UploadFailed(
-                "All server uploads failed".into(),
-            ));
+            return Err(BlossomError::UploadFailed(format!(
+                "All server uploads failed: [{}]",
+                errors.join(", ")
+            )));
         }
 
         Ok(results)
@@ -323,7 +332,16 @@ impl BlossomClient {
             .header("Authorization", format!("Nostr {}", auth_token))
             .body(body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                error!(
+                    url = %url,
+                    error = %e,
+                    path = %path.display(),
+                    "Network error during Blossom upload"
+                );
+                e
+            })?;
 
         let status = response.status();
         let headers = response.headers().clone();
@@ -392,8 +410,15 @@ impl BlossomClient {
         // Regex to extract stream index from segment filenames (e.g., "stream_0_001.m4s" -> "0")
         let stream_idx_regex = Regex::new(r"^(?:stream_|init_)(\d+)").ok();
 
+        info!(
+            segment_count = result.segment_paths.len(),
+            playlist_count = result.stream_playlists.len(),
+            "Starting HLS upload to Blossom"
+        );
+
         // Upload all segment files first
-        for segment_path in &result.segment_paths {
+        let total_segments = result.segment_paths.len();
+        for (idx, segment_path) in result.segment_paths.iter().enumerate() {
             let sha256 = hash_file(segment_path).await?;
             let filename = segment_path
                 .file_name()
@@ -402,6 +427,13 @@ impl BlossomClient {
                     warn!(path = %segment_path.display(), "Segment path has no valid filename");
                     ""
                 });
+
+            debug!(
+                filename = %filename,
+                index = idx + 1,
+                total = total_segments,
+                "Uploading HLS segment"
+            );
 
             // Track size per stream
             let file_size = match tokio::fs::metadata(segment_path).await {
@@ -427,7 +459,14 @@ impl BlossomClient {
 
             // Upload the segment and track timing
             let upload_start = Instant::now();
-            self.upload_file(segment_path, "video/mp4").await?;
+            self.upload_file(segment_path, "video/mp4").await.map_err(|e| {
+                error!(
+                    path = %segment_path.display(),
+                    error = %e,
+                    "Failed to upload segment"
+                );
+                e
+            })?;
             let upload_duration = upload_start.elapsed();
             on_progress(file_size, upload_duration);
         }
@@ -451,6 +490,8 @@ impl BlossomClient {
                     warn!(path = %playlist_path.display(), "Playlist path has no valid filename");
                     ""
                 });
+
+            info!(filename = %original_name, "Uploading rewritten HLS stream playlist");
 
             // Add playlist size to stream total
             *stream_sizes.entry(original_name.to_string()).or_insert(0) += playlist_size;
@@ -486,6 +527,8 @@ impl BlossomClient {
         let master_size = rewritten_master.len() as u64;
         total_size += master_size;
 
+        info!("Uploading rewritten HLS master playlist");
+
         let upload_start = Instant::now();
         let master_blob = self
             .upload_file(&temp_master, "application/vnd.apple.mpegurl")
@@ -495,6 +538,12 @@ impl BlossomClient {
 
         // Clean up temp file
         let _ = tokio::fs::remove_file(&temp_master).await;
+
+        info!(
+            url = %master_blob.url,
+            total_size_bytes = total_size,
+            "HLS upload complete"
+        );
 
         Ok(HlsResult {
             master_playlist: master_blob.url,

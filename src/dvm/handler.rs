@@ -237,6 +237,7 @@ impl JobHandler {
                     num_servers,
                     if num_servers == 1 { "" } else { "s" }
                 );
+                info!(path = %result.output_path.display(), size = file_size, "{}", upload_msg);
                 self.send_status(
                     job,
                     JobStatus::Processing,
@@ -345,6 +346,7 @@ impl JobHandler {
                 }
 
                 let upload_msg = format!("Uploading {} files to Blossom", total_files);
+                info!(segment_count = result.segment_paths.len(), "{}", upload_msg);
                 self.send_status(
                     job,
                     JobStatus::Processing,

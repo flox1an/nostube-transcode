@@ -6,6 +6,7 @@ import { useCurrentUser } from "../hooks/useCurrentUser";
 import { sendAdminCommand, subscribeToAdminResponses } from "../nostr/admin";
 import { getCurrentSigner } from "../nostr/client";
 import { RELAYS } from "../nostr/constants";
+import { IconLink, IconAlertTriangle } from "./Icons";
 import "./PairDvmModal.css";
 
 type PairingState = "idle" | "pairing" | "success" | "error";
@@ -120,20 +121,25 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
         </div>
 
         <div className="modal-content">
-          <p className="description">
-            Enter the DVM pubkey and pairing secret from the DVM console to claim admin access.
-          </p>
+          <div className="modal-info">
+            <IconLink className="info-icon" />
+            <p className="description">
+              Claim administrative control over a DVM by providing its public key and the pairing secret shown in its console output.
+            </p>
+          </div>
 
           <div className="form-group">
-            <label htmlFor="dvm-pubkey">DVM Pubkey (npub or hex)</label>
+            <label htmlFor="dvm-pubkey">DVM Public Key</label>
             <input
               id="dvm-pubkey"
               type="text"
               value={dvmPubkey}
               onChange={(e) => setDvmPubkey(e.target.value)}
-              placeholder="npub1... or hex pubkey"
+              placeholder="npub1... or hex"
               disabled={state === "pairing" || state === "success"}
+              className="modal-input"
             />
+            <p className="form-help">The DVM's identity (NPUB or hex format).</p>
           </div>
 
           <div className="form-group">
@@ -145,11 +151,24 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
               onChange={(e) => setSecret(e.target.value)}
               placeholder="xxxx-xxxx-xxxx"
               disabled={state === "pairing" || state === "success"}
+              className="modal-input"
             />
+            <p className="form-help">One-time secret displayed when the DVM starts up.</p>
           </div>
 
-          {errorMessage && <p className="error-message">{errorMessage}</p>}
-          {state === "success" && <p className="success-message">Successfully paired! Refreshing...</p>}
+          {errorMessage && (
+            <div className="error-box">
+              <IconAlertTriangle className="error-icon" />
+              <p className="error-message">{errorMessage}</p>
+            </div>
+          )}
+          
+          {state === "success" && (
+            <div className="success-box">
+              <span className="success-icon">✨</span>
+              <p className="success-message">Successfully paired! Your DVM will now appear in "My DVMs".</p>
+            </div>
+          )}
 
           <div className="modal-actions">
             <button
@@ -157,7 +176,9 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
               onClick={handlePair}
               disabled={state === "pairing" || state === "success" || !dvmPubkey || !secret}
             >
-              {state === "pairing" ? "Pairing..." : "Pair DVM"}
+              {state === "pairing" ? (
+                <><span className="mini-spinner"></span> Connecting...</>
+              ) : "Pair DVM"}
             </button>
             <button
               className="cancel-btn"
@@ -167,13 +188,6 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
               Cancel
             </button>
           </div>
-
-          {state === "pairing" && (
-            <div className="pairing-indicator">
-              <div className="spinner"></div>
-              <span>Sending pairing request...</span>
-            </div>
-          )}
         </div>
       </div>
     </div>

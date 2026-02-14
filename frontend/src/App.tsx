@@ -1,5 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Dashboard } from "./Dashboard";
+
+function RedirectToRoot() {
+  const location = useLocation();
+  return <Navigate to={`/${location.search}`} replace />;
+}
 
 function App() {
   return (
@@ -7,9 +12,9 @@ function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         {/* Legacy redirects */}
-        <Route path="/admin/*" element={<Navigate to="/" replace />} />
-        <Route path="/pair" element={<Navigate to="/" replace />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/admin/*" element={<RedirectToRoot />} />
+        <Route path="/pair" element={<RedirectToRoot />} />
+        <Route path="*" element={<RedirectToRoot />} />
       </Routes>
     </BrowserRouter>
   );
