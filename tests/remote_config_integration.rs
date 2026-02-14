@@ -3,7 +3,7 @@
 //! Tests the interaction between identity, pairing, config, and admin modules.
 
 use dvm_video_processing::admin::commands::{
-    parse_command, serialize_response, AdminCommand, AdminResponse, ConfigData, ConfigResponse,
+    parse_request, AdminCommand, AdminResponse, AdminResponseWire, ConfigData, ConfigResponse,
     ResponseData, StatusResponse,
 };
 use dvm_video_processing::bootstrap::{
@@ -43,9 +43,13 @@ fn test_full_pairing_flow() {
     // Verify wrong secret fails
     assert!(!pairing_state.verify("wrong-secr-etxx"));
 
-    // Step 7: Parse the claim command (simulating admin sending command)
-    let claim_json = format!(r#"{{"cmd": "claim_admin", "secret": "{}"}}"#, secret);
-    let cmd = parse_command(&claim_json).unwrap();
+    // Step 7: Parse the claim command (simulating admin sending v2 request)
+    let claim_json = format!(
+        r#"{{"id":"req-1","method":"claim_admin","params":{{"secret":"{}"}}}}"#,
+        secret
+    );
+    let req = parse_request(&claim_json).unwrap();
+    let cmd = req.to_command().unwrap();
 
     match cmd {
         AdminCommand::ClaimAdmin { secret: s } => {
@@ -123,29 +127,37 @@ fn test_bootstrap_relays() {
     assert_eq!(admin_url, "http://localhost:3000");
 }
 
-/// Test admin response serialization formats
+/// Test admin response serialization via v2 wire format
 #[test]
 fn test_admin_response_serialization() {
     // Test simple ok response
-    let ok_response = AdminResponse::ok();
-    let ok_json = serialize_response(&ok_response).unwrap();
+    let ok_wire = AdminResponseWire::from_response("req-1".to_string(), AdminResponse::ok());
+    let ok_json = serde_json::to_string(&ok_wire).unwrap();
     let ok_parsed: serde_json::Value = serde_json::from_str(&ok_json).unwrap();
-    assert_eq!(ok_parsed["ok"], true);
+    assert_eq!(ok_parsed["id"], "req-1");
+    assert_eq!(ok_parsed["result"], serde_json::json!({}));
     assert!(ok_parsed.get("error").is_none() || ok_parsed["error"].is_null());
 
     // Test ok with message
-    let msg_response = AdminResponse::ok_with_msg("Configuration updated successfully");
-    let msg_json = serialize_response(&msg_response).unwrap();
+    let msg_wire = AdminResponseWire::from_response(
+        "req-2".to_string(),
+        AdminResponse::ok_with_msg("Configuration updated successfully"),
+    );
+    let msg_json = serde_json::to_string(&msg_wire).unwrap();
     let msg_parsed: serde_json::Value = serde_json::from_str(&msg_json).unwrap();
-    assert_eq!(msg_parsed["ok"], true);
-    assert_eq!(msg_parsed["msg"], "Configuration updated successfully");
+    assert_eq!(msg_parsed["id"], "req-2");
+    assert_eq!(msg_parsed["result"]["msg"], "Configuration updated successfully");
 
     // Test error response
-    let error_response = AdminResponse::error("Invalid pairing secret");
-    let error_json = serialize_response(&error_response).unwrap();
-    let error_parsed: serde_json::Value = serde_json::from_str(&error_json).unwrap();
-    assert_eq!(error_parsed["ok"], false);
-    assert_eq!(error_parsed["error"], "Invalid pairing secret");
+    let err_wire = AdminResponseWire::from_response(
+        "req-3".to_string(),
+        AdminResponse::error("Invalid pairing secret"),
+    );
+    let err_json = serde_json::to_string(&err_wire).unwrap();
+    let err_parsed: serde_json::Value = serde_json::from_str(&err_json).unwrap();
+    assert_eq!(err_parsed["id"], "req-3");
+    assert_eq!(err_parsed["error"], "Invalid pairing secret");
+    assert!(err_parsed.get("result").is_none() || err_parsed["result"].is_null());
 
     // Test config response with data
     let config_data = ConfigData {
@@ -156,78 +168,79 @@ fn test_admin_response_serialization() {
         about: None,
         paused: false,
     };
-    let config_response = AdminResponse::ok_with_data(ResponseData::Config(ConfigResponse {
-        config: config_data,
-    }));
-    let config_json = serialize_response(&config_response).unwrap();
+    let config_wire = AdminResponseWire::from_response(
+        "req-4".to_string(),
+        AdminResponse::ok_with_data(ResponseData::Config(ConfigResponse {
+            config: config_data,
+        })),
+    );
+    let config_json = serde_json::to_string(&config_wire).unwrap();
     let config_parsed: serde_json::Value = serde_json::from_str(&config_json).unwrap();
 
-    assert_eq!(config_parsed["ok"], true);
-    assert_eq!(
-        config_parsed["config"]["relays"][0],
-        "wss://relay.example.com"
-    );
-    assert_eq!(
-        config_parsed["config"]["blossom_servers"][0],
-        "https://blossom.example.com"
-    );
-    assert_eq!(config_parsed["config"]["blob_expiration_days"], 30);
-    assert_eq!(config_parsed["config"]["paused"], false);
+    assert_eq!(config_parsed["id"], "req-4");
+    assert_eq!(config_parsed["result"]["config"]["relays"][0], "wss://relay.example.com");
+    assert_eq!(config_parsed["result"]["config"]["blossom_servers"][0], "https://blossom.example.com");
+    assert_eq!(config_parsed["result"]["config"]["blob_expiration_days"], 30);
+    assert_eq!(config_parsed["result"]["config"]["paused"], false);
 
     // Test status response
-    let status_response = AdminResponse::ok_with_data(ResponseData::Status(StatusResponse {
-        paused: false,
-        jobs_active: 2,
-        jobs_completed: 15,
-        jobs_failed: 1,
-        uptime_secs: 3600,
-        hwaccel: "videotoolbox".to_string(),
-        version: "0.1.0".to_string(),
-    }));
-    let status_json = serialize_response(&status_response).unwrap();
+    let status_wire = AdminResponseWire::from_response(
+        "req-5".to_string(),
+        AdminResponse::ok_with_data(ResponseData::Status(StatusResponse {
+            paused: false,
+            jobs_active: 2,
+            jobs_completed: 15,
+            jobs_failed: 1,
+            uptime_secs: 3600,
+            hwaccel: "videotoolbox".to_string(),
+            version: "0.1.0".to_string(),
+        })),
+    );
+    let status_json = serde_json::to_string(&status_wire).unwrap();
     let status_parsed: serde_json::Value = serde_json::from_str(&status_json).unwrap();
 
-    assert_eq!(status_parsed["ok"], true);
-    assert_eq!(status_parsed["paused"], false);
-    assert_eq!(status_parsed["jobs_active"], 2);
-    assert_eq!(status_parsed["jobs_completed"], 15);
-    assert_eq!(status_parsed["jobs_failed"], 1);
-    assert_eq!(status_parsed["uptime_secs"], 3600);
-    assert_eq!(status_parsed["hwaccel"], "videotoolbox");
+    assert_eq!(status_parsed["id"], "req-5");
+    assert_eq!(status_parsed["result"]["paused"], false);
+    assert_eq!(status_parsed["result"]["jobs_active"], 2);
+    assert_eq!(status_parsed["result"]["jobs_completed"], 15);
+    assert_eq!(status_parsed["result"]["jobs_failed"], 1);
+    assert_eq!(status_parsed["result"]["uptime_secs"], 3600);
+    assert_eq!(status_parsed["result"]["hwaccel"], "videotoolbox");
 }
 
-/// Test command parsing for all admin commands
+/// Test command parsing for all admin commands via v2 wire format
 #[test]
 fn test_admin_command_parsing() {
+    // Helper to parse a v2 request and convert to command
+    fn parse_cmd(method: &str, params: &str) -> AdminCommand {
+        let json = format!(r#"{{"id":"test","method":"{}","params":{}}}"#, method, params);
+        let req = parse_request(&json).unwrap();
+        req.to_command().unwrap()
+    }
+
     // GetConfig
-    let get_config = parse_command(r#"{"cmd": "get_config"}"#).unwrap();
-    assert_eq!(get_config, AdminCommand::GetConfig);
+    assert_eq!(parse_cmd("get_config", "{}"), AdminCommand::GetConfig);
 
     // SetRelays
-    let set_relays = parse_command(
-        r#"{"cmd": "set_relays", "relays": ["wss://relay1.com", "wss://relay2.com"]}"#,
-    )
-    .unwrap();
+    let set_relays = parse_cmd("set_relays", r#"{"relays":["wss://relay1.com","wss://relay2.com"]}"#);
     assert!(matches!(set_relays, AdminCommand::SetRelays { relays } if relays.len() == 2));
 
     // SetBlossomServers
-    let set_blossom =
-        parse_command(r#"{"cmd": "set_blossom_servers", "servers": ["https://b1.com"]}"#).unwrap();
+    let set_blossom = parse_cmd("set_blossom_servers", r#"{"servers":["https://b1.com"]}"#);
     assert!(matches!(
         set_blossom,
         AdminCommand::SetBlossomServers { servers } if servers.len() == 1
     ));
 
     // SetBlobExpiration
-    let set_expiration = parse_command(r#"{"cmd": "set_blob_expiration", "days": 60}"#).unwrap();
+    let set_expiration = parse_cmd("set_blob_expiration", r#"{"days":60}"#);
     assert!(matches!(
         set_expiration,
         AdminCommand::SetBlobExpiration { days: 60 }
     ));
 
     // SetProfile
-    let set_profile =
-        parse_command(r#"{"cmd": "set_profile", "name": "Test", "about": "Description"}"#).unwrap();
+    let set_profile = parse_cmd("set_profile", r#"{"name":"Test","about":"Description"}"#);
     assert!(matches!(
         set_profile,
         AdminCommand::SetProfile {
@@ -237,41 +250,32 @@ fn test_admin_command_parsing() {
     ));
 
     // Pause/Resume
-    let pause = parse_command(r#"{"cmd": "pause"}"#).unwrap();
-    assert_eq!(pause, AdminCommand::Pause);
-
-    let resume = parse_command(r#"{"cmd": "resume"}"#).unwrap();
-    assert_eq!(resume, AdminCommand::Resume);
+    assert_eq!(parse_cmd("pause", "{}"), AdminCommand::Pause);
+    assert_eq!(parse_cmd("resume", "{}"), AdminCommand::Resume);
 
     // Status
-    let status = parse_command(r#"{"cmd": "status"}"#).unwrap();
-    assert_eq!(status, AdminCommand::Status);
+    assert_eq!(parse_cmd("status", "{}"), AdminCommand::Status);
 
     // JobHistory with default limit
-    let job_history = parse_command(r#"{"cmd": "job_history"}"#).unwrap();
     assert!(matches!(
-        job_history,
+        parse_cmd("job_history", "{}"),
         AdminCommand::JobHistory { limit: 20 }
     ));
 
     // JobHistory with custom limit
-    let job_history_custom = parse_command(r#"{"cmd": "job_history", "limit": 50}"#).unwrap();
     assert!(matches!(
-        job_history_custom,
+        parse_cmd("job_history", r#"{"limit":50}"#),
         AdminCommand::JobHistory { limit: 50 }
     ));
 
     // SelfTest
-    let self_test = parse_command(r#"{"cmd": "self_test"}"#).unwrap();
-    assert_eq!(self_test, AdminCommand::SelfTest);
+    assert_eq!(parse_cmd("self_test", "{}"), AdminCommand::SelfTest);
 
     // SystemInfo
-    let system_info = parse_command(r#"{"cmd": "system_info"}"#).unwrap();
-    assert_eq!(system_info, AdminCommand::SystemInfo);
+    assert_eq!(parse_cmd("system_info", "{}"), AdminCommand::SystemInfo);
 
     // ImportEnvConfig
-    let import_env = parse_command(r#"{"cmd": "import_env_config"}"#).unwrap();
-    assert_eq!(import_env, AdminCommand::ImportEnvConfig);
+    assert_eq!(parse_cmd("import_env_config", "{}"), AdminCommand::ImportEnvConfig);
 }
 
 /// Test that config defaults work correctly when parsing minimal JSON
