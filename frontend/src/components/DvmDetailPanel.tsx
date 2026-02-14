@@ -9,7 +9,8 @@ import {
   type DvmConfig,
   type DvmStatus,
   type DvmJob,
-  type AdminResponse,
+  type DvmDashboard,
+  type AdminResponseWire,
 } from "../nostr/admin";
 import { getCurrentSigner } from "../nostr/client";
 import { RELAYS } from "../nostr/constants";
@@ -61,20 +62,36 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
   const subscriptionRef = useRef<(() => void) | null>(null);
   const initializedRef = useRef<string | null>(null);
 
-  const handleAdminResponse = useCallback((response: AdminResponse) => {
-    if (!response.ok) {
+  const handleAdminResponse = useCallback((response: AdminResponseWire) => {
+    if (response.error) {
       console.error("Admin command failed:", response.error);
       return;
     }
 
-    if ("paused" in response && "jobs_active" in response) {
-      setStatus(response as unknown as DvmStatus);
-    } else if ("config" in response) {
-      const cfg = response.config as DvmConfig;
+    const data = response.result as Record<string, unknown>;
+    if (!data) return;
+
+    // Dashboard response (status + config + jobs)
+    if ("status" in data && "config" in data && "jobs" in data) {
+      const dashboard = data as unknown as DvmDashboard;
+      setStatus(dashboard.status);
+      setConfig(dashboard.config);
+      setConfigForm(dashboard.config);
+      setJobs(dashboard.jobs);
+    }
+    // Status response (from status, pause, or resume commands)
+    else if ("paused" in data && "jobs_active" in data) {
+      setStatus(data as unknown as DvmStatus);
+    }
+    // Config response (from set_config)
+    else if ("config" in data) {
+      const cfg = data.config as DvmConfig;
       setConfig(cfg);
       setConfigForm(cfg);
-    } else if ("jobs" in response) {
-      setJobs(response.jobs as DvmJob[]);
+    }
+    // Job history response
+    else if ("jobs" in data) {
+      setJobs(data.jobs as DvmJob[]);
     }
   }, []);
 
@@ -98,11 +115,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
     );
     subscriptionRef.current = unsubscribe;
 
-    Promise.all([
-      sendAdminCommand(signer, dvm.pubkey, { cmd: "status" }, RELAYS),
-      sendAdminCommand(signer, dvm.pubkey, { cmd: "get_config" }, RELAYS),
-      sendAdminCommand(signer, dvm.pubkey, { cmd: "job_history", limit: 20 }, RELAYS),
-    ])
+    sendAdminCommand(signer, dvm.pubkey, "get_dashboard", { limit: 20 }, RELAYS)
       .then(() => setTimeout(() => setLoading(false), 1500))
       .catch((err) => {
         console.error("Failed to fetch DVM data:", err);
@@ -124,12 +137,10 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
     setActionLoading(true);
     try {
-      const cmd = status.paused ? { cmd: "resume" as const } : { cmd: "pause" as const };
-      await sendAdminCommand(signer, dvm.pubkey, cmd, RELAYS);
-      setTimeout(() => {
-        sendAdminCommand(signer, dvm.pubkey, { cmd: "status" }, RELAYS);
-        setActionLoading(false);
-      }, 1000);
+      const method = status.paused ? "resume" : "pause";
+      await sendAdminCommand(signer, dvm.pubkey, method, {}, RELAYS);
+      // Status will be updated via the response handler (pause/resume now return status)
+      setTimeout(() => setActionLoading(false), 1000);
     } catch (err) {
       console.error("Failed to pause/resume:", err);
       setActionLoading(false);
@@ -142,37 +153,16 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
     setActionLoading(true);
     try {
-      if (configForm.relays && configForm.relays.length > 0) {
-        await sendAdminCommand(signer, dvm.pubkey, {
-          cmd: "set_relays",
-          relays: configForm.relays,
-        }, RELAYS);
-      }
-      if (configForm.blossom_servers && configForm.blossom_servers.length > 0) {
-        await sendAdminCommand(signer, dvm.pubkey, {
-          cmd: "set_blossom_servers",
-          servers: configForm.blossom_servers,
-        }, RELAYS);
-      }
-      if (configForm.name && configForm.about !== undefined) {
-        await sendAdminCommand(signer, dvm.pubkey, {
-          cmd: "set_profile",
-          name: configForm.name,
-          about: configForm.about,
-        }, RELAYS);
-      }
-      if (configForm.blob_expiration_days !== undefined) {
-        await sendAdminCommand(signer, dvm.pubkey, {
-          cmd: "set_blob_expiration",
-          days: configForm.blob_expiration_days,
-        }, RELAYS);
-      }
-
+      await sendAdminCommand(signer, dvm.pubkey, "set_config", {
+        relays: configForm.relays && configForm.relays.length > 0 ? configForm.relays : undefined,
+        blossom_servers: configForm.blossom_servers && configForm.blossom_servers.length > 0 ? configForm.blossom_servers : undefined,
+        blob_expiration_days: configForm.blob_expiration_days,
+        name: configForm.name,
+        about: configForm.about,
+      }, RELAYS);
+      // Config will be updated via the response handler (set_config returns updated config)
       setEditingConfig(false);
-      setTimeout(() => {
-        sendAdminCommand(signer, dvm.pubkey, { cmd: "get_config" }, RELAYS);
-        setActionLoading(false);
-      }, 1000);
+      setTimeout(() => setActionLoading(false), 1000);
     } catch (err) {
       console.error("Failed to save config:", err);
       setActionLoading(false);

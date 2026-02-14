@@ -61,8 +61,8 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
     }
 
     const signer = getCurrentSigner();
-    if (!signer || !signer.nip04) {
-      setErrorMessage("Signer does not support encryption (NIP-04 required)");
+    if (!signer || !signer.nip44) {
+      setErrorMessage("Signer does not support encryption (NIP-44 required)");
       return;
     }
 
@@ -76,16 +76,16 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
         dvmPubkey,
         RELAYS,
         (response) => {
-          if (response.ok) {
+          if (response.error) {
+            setState("error");
+            setErrorMessage(response.error || "Pairing failed");
+            unsubscribe();
+          } else if (response.result) {
             setState("success");
             unsubscribe();
             setTimeout(() => {
               onSuccess();
             }, 1500);
-          } else {
-            setState("error");
-            setErrorMessage(response.error || "Pairing failed");
-            unsubscribe();
           }
         }
       );
@@ -93,7 +93,8 @@ export function PairDvmModal({ onClose, onSuccess }: PairDvmModalProps) {
       await sendAdminCommand(
         signer,
         dvmPubkey,
-        { cmd: "claim_admin", secret },
+        "claim_admin",
+        { secret },
         RELAYS
       );
 

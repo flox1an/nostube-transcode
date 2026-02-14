@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   sendAdminCommand,
   subscribeToAdminResponses,
-  type AdminResponse,
+  type AdminResponseWire,
   type SelfTestResult,
   type SystemInfoResult,
   type HwEncoderInfo,
@@ -45,18 +45,26 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
   const subscriptionRef = useRef<(() => void) | null>(null);
   const pendingCommandRef = useRef<"system_info" | "self_test" | null>(null);
 
-  const handleResponse = useCallback((response: AdminResponse) => {
+  const handleResponse = useCallback((response: AdminResponseWire) => {
+    if (response.error) {
+      console.error("Admin command failed:", response.error);
+      return;
+    }
+
+    const data = response.result as Record<string, unknown>;
+    if (!data) return;
+
     // Check if this is a system_info response
-    if ("platform" in response && "arch" in response) {
-      setSystemInfo(response as unknown as SystemInfoResult);
+    if ("platform" in data && "arch" in data) {
+      setSystemInfo(data as unknown as SystemInfoResult);
       setSystemInfoLoading(false);
       if (pendingCommandRef.current === "system_info") {
         pendingCommandRef.current = null;
       }
     }
     // Check if this is a self_test response
-    else if ("success" in response && ("speed_ratio" in response || "error" in response)) {
-      setResult(response as unknown as SelfTestResult);
+    else if ("success" in data && ("speed_ratio" in data || "error" in data)) {
+      setResult(data as unknown as SelfTestResult);
       setIsRunning(false);
       if (pendingCommandRef.current === "self_test") {
         pendingCommandRef.current = null;
@@ -85,7 +93,7 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
 
     // Fetch system info
     pendingCommandRef.current = "system_info";
-    sendAdminCommand(signer, dvmPubkey, { cmd: "system_info" }, RELAYS)
+    sendAdminCommand(signer, dvmPubkey, "system_info", {}, RELAYS)
       .catch((err) => {
         setSystemInfoError(err instanceof Error ? err.message : "Failed to fetch system info");
         setSystemInfoLoading(false);
@@ -123,7 +131,7 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
     pendingCommandRef.current = "self_test";
 
     try {
-      await sendAdminCommand(signer, dvmPubkey, { cmd: "self_test" }, RELAYS);
+      await sendAdminCommand(signer, dvmPubkey, "self_test", {}, RELAYS);
 
       // Set a timeout for self-test (it can take a while)
       setTimeout(() => {

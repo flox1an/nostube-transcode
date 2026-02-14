@@ -116,8 +116,16 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
           metadata.pubkey,
           RELAYS,
           (response) => {
-            if ("paused" in response && "jobs_active" in response) {
-              const status = response as unknown as DvmStatus;
+            if (response.error) {
+              console.error("Admin command failed:", response.error);
+              return;
+            }
+
+            const data = response.result as Record<string, unknown>;
+            if (!data) return;
+
+            if ("paused" in data && "jobs_active" in data) {
+              const status = data as unknown as DvmStatus;
               setMyDvms((prev) => {
                 const next = new Map(prev);
                 const existing = next.get(metadata.pubkey);
@@ -135,7 +143,7 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
           }
         );
 
-        sendAdminCommand(signer, metadata.pubkey, { cmd: "status" }, RELAYS).catch((err) => {
+        sendAdminCommand(signer, metadata.pubkey, "status", {}, RELAYS).catch((err) => {
           console.error("Failed to fetch status:", err);
           setMyDvms((prev) => {
             const next = new Map(prev);
