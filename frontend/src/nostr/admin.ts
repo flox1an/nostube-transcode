@@ -4,29 +4,28 @@ import { mapEventsToStore } from "applesauce-core";
 import { filter } from "rxjs";
 import { relayPool, eventStore } from "./core";
 
-/** Expiration time for admin commands (1 hour in seconds) */
-const ADMIN_COMMAND_EXPIRATION_SECS = 3600;
+/** Admin RPC event kind (ephemeral) */
+const ADMIN_RPC_KIND = 24207;
 
-// Admin command types
-export type AdminCommand =
-  | { cmd: "claim_admin"; secret: string }
-  | { cmd: "get_config" }
-  | { cmd: "set_relays"; relays: string[] }
-  | { cmd: "set_blossom_servers"; servers: string[] }
-  | { cmd: "set_blob_expiration"; days: number }
-  | { cmd: "set_profile"; name: string; about: string }
-  | { cmd: "pause" }
-  | { cmd: "resume" }
-  | { cmd: "status" }
-  | { cmd: "job_history"; limit?: number }
-  | { cmd: "self_test" }
-  | { cmd: "system_info" };
+/** Generate a random hex ID for request correlation */
+function randomId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
-// Admin response types
-export interface AdminResponse {
-  ok: boolean;
+// Admin request (NIP-46 style wire format)
+export interface AdminRequest {
+  id: string;
+  method: string;
+  params: Record<string, unknown>;
+}
+
+// Admin response (NIP-46 style wire format)
+export interface AdminResponseWire {
+  id: string;
+  result?: unknown;
   error?: string;
-  [key: string]: unknown;
 }
 
 export interface DvmConfig {
@@ -39,7 +38,6 @@ export interface DvmConfig {
 }
 
 export interface DvmStatus {
-  ok: boolean;
   paused: boolean;
   jobs_active: number;
   jobs_completed: number;
@@ -47,6 +45,12 @@ export interface DvmStatus {
   uptime_secs: number;
   hwaccel?: string;
   version: string;
+}
+
+export interface DvmDashboard {
+  status: DvmStatus;
+  config: DvmConfig;
+  jobs: DvmJob[];
 }
 
 export interface DvmJob {
@@ -60,7 +64,6 @@ export interface DvmJob {
 }
 
 export interface SelfTestResult {
-  ok: boolean;
   success: boolean;
   video_duration_secs?: number;
   encode_time_secs?: number;
@@ -98,7 +101,6 @@ export interface FfmpegInfo {
 }
 
 export interface SystemInfoResult {
-  ok: boolean;
   platform: string;
   arch: string;
   hw_encoders: HwEncoderInfo[];
@@ -110,31 +112,33 @@ export interface SystemInfoResult {
 
 /**
  * Send an encrypted admin command to a DVM
+ * Returns the request ID for response correlation
  */
 export async function sendAdminCommand(
   signer: ISigner,
   dvmPubkey: string,
-  command: AdminCommand,
+  method: string,
+  params: Record<string, unknown>,
   relays: string[]
-): Promise<void> {
-  if (!signer.nip04) {
-    throw new Error("Signer does not support NIP-04 encryption");
+): Promise<string> {
+  if (!signer.nip44) {
+    throw new Error("Signer does not support NIP-44 encryption");
   }
 
+  const id = randomId();
   const adminPubkey = await signer.getPublicKey();
-  const content = JSON.stringify(command);
-  const encrypted = await signer.nip04.encrypt(dvmPubkey, content);
+  const request: AdminRequest = { id, method, params };
+  const content = JSON.stringify(request);
+  const encrypted = await signer.nip44.encrypt(dvmPubkey, content);
 
   const now = Math.floor(Date.now() / 1000);
 
   const template: Event = {
-    kind: 4, // NIP-04 encrypted DM
+    kind: ADMIN_RPC_KIND,
     pubkey: adminPubkey,
     created_at: now,
     tags: [
       ["p", dvmPubkey],
-      // NIP-40 expiration tag (24 hours)
-      ["expiration", String(now + ADMIN_COMMAND_EXPIRATION_SECS)],
     ],
     content: encrypted,
     id: "",
@@ -143,12 +147,13 @@ export async function sendAdminCommand(
 
   const signedEvent = await signer.signEvent(template);
   await relayPool.publish(relays, signedEvent);
+  return id;
 }
 
 /**
  * Subscribe to admin command responses from a DVM
  * Returns a function to unsubscribe
- * 
+ *
  * Uses EventStore for automatic deduplication across relays
  */
 export function subscribeToAdminResponses(
@@ -156,10 +161,10 @@ export function subscribeToAdminResponses(
   adminPubkey: string,
   dvmPubkey: string,
   relays: string[],
-  onResponse: (response: AdminResponse) => void
+  onResponse: (response: AdminResponseWire) => void
 ): () => void {
   const filters = {
-    kinds: [4], // Encrypted DMs
+    kinds: [ADMIN_RPC_KIND],
     authors: [dvmPubkey],
     "#p": [adminPubkey],
     since: Math.floor(Date.now() / 1000),
@@ -170,7 +175,7 @@ export function subscribeToAdminResponses(
     .subscription(relays, filters)
     .pipe(
       // Filter out EOSE signals
-      filter((response): response is Event => 
+      filter((response): response is Event =>
         typeof response !== "string" && "kind" in response
       ),
       // Deduplicate events through EventStore
@@ -178,19 +183,19 @@ export function subscribeToAdminResponses(
     )
     .subscribe({
       async next(event) {
-        if (event.kind !== 4) return;
+        if (event.kind !== ADMIN_RPC_KIND) return;
 
         try {
-          if (!signer.nip04) {
-            console.error("Signer does not support NIP-04");
+          if (!signer.nip44) {
+            console.error("Signer does not support NIP-44");
             return;
           }
 
-          const decrypted = await signer.nip04.decrypt(
+          const decrypted = await signer.nip44.decrypt(
             dvmPubkey,
             event.content
           );
-          const response = JSON.parse(decrypted) as AdminResponse;
+          const response = JSON.parse(decrypted) as AdminResponseWire;
           onResponse(response);
         } catch (e) {
           console.error("Failed to decrypt admin response:", e);
