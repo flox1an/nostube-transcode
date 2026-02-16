@@ -179,7 +179,7 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
             return next;
           });
           unsubscribeStatus();
-        }, 5000);
+        }, 10000);
       }
     );
 
@@ -263,7 +263,7 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
                     {dvm.name || <UserName pubkey={dvm.pubkey} />}
                   </span>
                   {dvm.isOwned && (
-                    <span className={`status-indicator ${dvm.status?.paused ? "paused" : "active"}`}>
+                    <span className={`status-indicator ${dvm.statusError ? "offline" : dvm.status?.paused ? "paused" : dvm.status ? "active" : ""}`}>
                     </span>
                   )}
                 </div>

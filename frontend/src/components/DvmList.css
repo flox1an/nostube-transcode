@@ -173,6 +173,10 @@
   background: #fbbf24;
 }
 
+.status-indicator.offline {
+  background: #666;
+}
+
 .dvm-item-stats {
   display: flex;
   gap: 0.5rem;

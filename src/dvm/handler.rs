@@ -77,6 +77,7 @@ pub struct JobHandler {
     publisher: Arc<EventPublisher>,
     blossom: Arc<BlossomClient>,
     processor: Arc<VideoProcessor>,
+    http: reqwest::Client,
 }
 
 impl JobHandler {
@@ -91,6 +92,7 @@ impl JobHandler {
             publisher,
             blossom,
             processor,
+            http: reqwest::Client::new(),
         }
     }
 
@@ -114,11 +116,11 @@ impl JobHandler {
         let job_id = job.event_id();
         let requester = job.requester();
 
-        // Send processing status
+        // Send immediate acknowledgment
         self.send_status(
             &job,
             JobStatus::Processing,
-            Some("Starting video transformation"),
+            Some("Job received, validating input..."),
         )
         .await?;
 
@@ -134,6 +136,31 @@ impl JobHandler {
                 .send_error(&job, "Only HTTP and HTTPS URLs are supported")
                 .await;
         }
+
+        // Perform HEAD request to check availability
+        match self.http.head(input_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                debug!(url = %input_url, "URL is accessible");
+            }
+            Ok(resp) => {
+                let err_msg = format!("Input URL returned status {}", resp.status());
+                warn!(url = %input_url, error = %err_msg);
+                return self.send_error(&job, &err_msg).await;
+            }
+            Err(e) => {
+                let err_msg = format!("Failed to reach input URL: {}", e);
+                warn!(url = %input_url, error = %err_msg);
+                return self.send_error(&job, &err_msg).await;
+            }
+        }
+
+        // Send processing status
+        self.send_status(
+            &job,
+            JobStatus::Processing,
+            Some("Starting video transformation"),
+        )
+        .await?;
 
         // Process the video
         let result = self.process_video(&job).await;
@@ -229,7 +256,7 @@ impl JobHandler {
                     .unwrap_or(0);
 
                 // Total bytes = file_size * number_of_servers
-                let num_servers = self.blossom.server_count();
+                let num_servers = self.blossom.server_count().await;
                 let total_upload_bytes = file_size * num_servers as u64;
 
                 let upload_msg = format!(

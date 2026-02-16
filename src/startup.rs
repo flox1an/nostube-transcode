@@ -93,6 +93,7 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
                     tracing::warn!("Failed to add relay {}: {}", relay, e);
                 }
             }
+            client.connect().await;
         }
     }
 

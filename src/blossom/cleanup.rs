@@ -4,16 +4,16 @@ use tokio::time::{interval, Duration as TokioDuration};
 use tracing::{debug, error, info, warn};
 
 use crate::blossom::BlossomClient;
-use crate::config::Config;
+use crate::dvm_state::SharedDvmState;
 
 pub struct BlobCleanup {
-    config: Arc<Config>,
+    state: SharedDvmState,
     client: Arc<BlossomClient>,
 }
 
 impl BlobCleanup {
-    pub fn new(config: Arc<Config>, client: Arc<BlossomClient>) -> Self {
-        Self { config, client }
+    pub fn new(state: SharedDvmState, client: Arc<BlossomClient>) -> Self {
+        Self { state, client }
     }
 
     /// Run the cleanup scheduler
@@ -34,19 +34,30 @@ impl BlobCleanup {
 
     /// Clean up expired blobs from all Blossom servers
     pub async fn cleanup_expired_blobs(&self) -> Result<usize, crate::error::BlossomError> {
-        let expiration_threshold =
-            Utc::now() - Duration::days(self.config.blob_expiration_days as i64);
+        let (expiration_days, servers) = {
+            let state = self.state.read().await;
+            let days = state.config.blob_expiration_days;
+            let servers: Vec<url::Url> = state
+                .config
+                .blossom_servers
+                .iter()
+                .filter_map(|s| url::Url::parse(s).ok())
+                .collect();
+            (days, servers)
+        };
+
+        let expiration_threshold = Utc::now() - Duration::days(expiration_days as i64);
         let threshold_ts = expiration_threshold.timestamp();
 
         info!(
             threshold = %expiration_threshold,
-            days = self.config.blob_expiration_days,
+            days = expiration_days,
             "Starting blob cleanup"
         );
 
         let mut total_deleted = 0;
 
-        for server in &self.config.blossom_servers {
+        for server in &servers {
             match self.cleanup_server(server, threshold_ts).await {
                 Ok(count) => {
                     total_deleted += count;

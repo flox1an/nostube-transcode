@@ -1,10 +1,12 @@
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tokio::time::{interval, Duration};
 use tracing::{error, info};
 
 use crate::config::Config;
 use crate::dvm::events::DVM_VIDEO_TRANSFORM_REQUEST_KIND;
+use crate::dvm_state::SharedDvmState;
 use crate::nostr::EventPublisher;
 use crate::video::HwAccel;
 
@@ -101,58 +103,127 @@ pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuild
     EventBuilder::new(DVM_ANNOUNCEMENT_KIND, "", tags)
 }
 
-/// Manages periodic DVM announcement publishing
+/// Manages periodic DVM announcement publishing.
+///
+/// Republishes whenever the config changes (via admin commands)
+/// or on a regular hourly interval.
 pub struct AnnouncementPublisher {
     config: Arc<Config>,
+    state: SharedDvmState,
     publisher: Arc<EventPublisher>,
     hwaccel: HwAccel,
+    config_notify: Arc<Notify>,
 }
 
 impl AnnouncementPublisher {
-    pub fn new(config: Arc<Config>, publisher: Arc<EventPublisher>, hwaccel: HwAccel) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        state: SharedDvmState,
+        publisher: Arc<EventPublisher>,
+        hwaccel: HwAccel,
+        config_notify: Arc<Notify>,
+    ) -> Self {
         Self {
             config,
+            state,
             publisher,
             hwaccel,
+            config_notify,
         }
     }
 
-    /// Run the announcement publisher, publishing immediately and then periodically
+    /// Run the announcement publisher, publishing immediately and then periodically.
+    ///
+    /// Also republishes immediately when notified of config changes.
+    /// If no admin is configured yet (pairing mode), skips the initial publish
+    /// and waits for a config change notification (e.g. after pairing completes).
     pub async fn run(&self) {
         info!("Announcement publisher started");
 
-        // Publish immediately on startup
-        self.publish_announcement().await;
+        // Give relays a few seconds to connect before the first announcement
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Then publish every hour
+        // Only publish initial announcement if admin is already configured.
+        // During pairing mode, the first announcement will be triggered by
+        // config_notify once an admin claims the DVM.
+        {
+            let state = self.state.read().await;
+            if state.config.has_admin() {
+                drop(state);
+                self.publish_announcement().await;
+            } else {
+                info!("No admin configured yet, waiting for pairing to complete");
+            }
+        }
+
+        // Then publish every hour or when config changes
         let mut ticker = interval(Duration::from_secs(3600));
         ticker.tick().await; // Skip the immediate tick (we already published)
 
         loop {
-            ticker.tick().await;
-            self.publish_announcement().await;
+            tokio::select! {
+                _ = ticker.tick() => {
+                    self.publish_announcement().await;
+                }
+                _ = self.config_notify.notified() => {
+                    info!("Config changed, republishing announcement");
+                    self.publish_announcement().await;
+                    // Reset the interval so we don't publish again too soon
+                    ticker.reset();
+                }
+            }
+        }
+    }
+
+    /// Build a current Config snapshot from the shared DVM state.
+    fn current_config(&self, state: &crate::dvm_state::DvmState) -> Config {
+        Config {
+            nostr_keys: self.config.nostr_keys.clone(),
+            nostr_relays: state
+                .config
+                .relays
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect(),
+            blossom_servers: state
+                .config
+                .blossom_servers
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect(),
+            blob_expiration_days: state.config.blob_expiration_days,
+            temp_dir: self.config.temp_dir.clone(),
+            ffmpeg_path: self.config.ffmpeg_path.clone(),
+            ffprobe_path: self.config.ffprobe_path.clone(),
+            http_port: self.config.http_port,
+            dvm_name: state.config.name.clone(),
+            dvm_about: state.config.about.clone(),
+            admin_pubkey: state.config.admin.clone(),
         }
     }
 
     async fn publish_announcement(&self) {
-        let name = self
-            .config
+        let state = self.state.read().await;
+        let config = self.current_config(&state);
+        drop(state);
+
+        let name = config
             .dvm_name
             .clone()
             .unwrap_or_else(|| DEFAULT_DVM_NAME.to_string());
 
         info!(
             name = %name,
-            about = ?self.config.dvm_about,
+            about = ?config.dvm_about,
             "Publishing DVM announcement"
         );
 
-        let event = build_announcement_event(&self.config, self.hwaccel);
+        let event = build_announcement_event(&config, self.hwaccel);
 
         match self.publisher.publish(event).await {
             Ok(_) => {
                 info!(
-                    pubkey = %self.config.nostr_keys.public_key(),
+                    pubkey = %config.nostr_keys.public_key(),
                     service_id = %DVM_SERVICE_ID,
                     "DVM announcement published"
                 );

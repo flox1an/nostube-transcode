@@ -47,6 +47,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
   const [jobs, setJobs] = useState<DvmJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   // Config editing
   const [editingConfig, setEditingConfig] = useState(false);
@@ -86,6 +87,8 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
     const data = response.result as Record<string, unknown>;
     if (!data) return;
+
+    setOffline(false);
 
     // Dashboard response (status + config + jobs)
     if ("status" in data && "config" in data && "jobs" in data) {
@@ -136,7 +139,18 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
         setLoading(false);
       });
 
+    const timeout = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) {
+          setOffline(true);
+          return false;
+        }
+        return prev;
+      });
+    }, 10000);
+
     return () => {
+      clearTimeout(timeout);
       if (subscriptionRef.current) {
         subscriptionRef.current();
         subscriptionRef.current = null;
@@ -339,11 +353,13 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
           </div>
         </div>
         <div className="header-actions">
-          {status && (
+          {offline ? (
+            <span className="status-badge offline">Offline</span>
+          ) : status ? (
             <span className={`status-badge ${status.paused ? "paused" : "active"}`}>
               {status.paused ? "Paused" : "Active"}
             </span>
-          )}
+          ) : null}
           <button
             className="action-btn"
             onClick={handlePauseResume}

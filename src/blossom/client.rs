@@ -17,6 +17,7 @@ use url::Url;
 use crate::blossom::auth::create_upload_auth_token;
 use crate::config::Config;
 use crate::dvm::events::{HlsResult, StreamPlaylist};
+use crate::dvm_state::SharedDvmState;
 use crate::error::BlossomError;
 use crate::util::hash_file;
 use crate::video::playlist::PlaylistRewriter;
@@ -68,20 +69,33 @@ pub struct BlobDescriptor {
 
 pub struct BlossomClient {
     config: Arc<Config>,
+    state: SharedDvmState,
     http: Client,
 }
 
 impl BlossomClient {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>, state: SharedDvmState) -> Self {
         Self {
             config,
+            state,
             http: Client::new(),
         }
     }
 
+    /// Get current blossom servers from live state (parses strings to Urls)
+    async fn blossom_servers(&self) -> Vec<Url> {
+        let state = self.state.read().await;
+        state
+            .config
+            .blossom_servers
+            .iter()
+            .filter_map(|s| Url::parse(s).ok())
+            .collect()
+    }
+
     /// Get the number of configured Blossom servers
-    pub fn server_count(&self) -> usize {
-        self.config.blossom_servers.len()
+    pub async fn server_count(&self) -> usize {
+        self.blossom_servers().await.len()
     }
 
     /// Upload a file to all configured Blossom servers
@@ -116,7 +130,8 @@ impl BlossomClient {
         let mut results = Vec::new();
         let mut errors = Vec::new();
 
-        for server in &self.config.blossom_servers {
+        let servers = self.blossom_servers().await;
+        for server in &servers {
             let upload_start = Instant::now();
             match self
                 .upload_to_server(server, path, &sha256, file_size, mime_type)
@@ -182,7 +197,8 @@ impl BlossomClient {
         let mut results = Vec::new();
         let mut errors = Vec::new();
 
-        for server in &self.config.blossom_servers {
+        let servers = self.blossom_servers().await;
+        for server in &servers {
             let upload_start = Instant::now();
             // Reset the counter for each server (since we're uploading the full file again)
             let server_bytes = Arc::new(AtomicU64::new(0));
@@ -244,7 +260,8 @@ impl BlossomClient {
         let mut results = Vec::new();
         let mut errors = Vec::new();
 
-        for server in &self.config.blossom_servers {
+        let servers = self.blossom_servers().await;
+        for server in &servers {
             let upload_start = Instant::now();
             match self
                 .upload_to_server_with_progress(

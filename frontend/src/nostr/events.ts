@@ -214,6 +214,11 @@ export async function parseStatusEvent(
     }
   }
 
+  // If no message from tags, use the event content
+  if (!message && event.content) {
+    message = event.content;
+  }
+
   return { status, message, eta };
 }
 

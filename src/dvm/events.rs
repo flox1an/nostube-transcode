@@ -506,13 +506,17 @@ pub fn build_status_event_with_eta_encrypted(
         }
     }
 
-    // Unencrypted: put message and eta in tags
-    if let Some(msg) = message {
+    // Unencrypted: put message in content field and eta in tags
+    let content = if let Some(msg) = message {
+        // Also keep the content tag for backward compatibility with our own docs
         tags.push(Tag::custom(
             TagKind::Custom("content".into()),
             vec![msg.to_string()],
         ));
-    }
+        msg.to_string()
+    } else {
+        status.as_str().to_string()
+    };
 
     if let Some(secs) = remaining_secs {
         tags.push(Tag::custom(
@@ -521,7 +525,7 @@ pub fn build_status_event_with_eta_encrypted(
         ));
     }
 
-    EventBuilder::new(DVM_STATUS_KIND, "", tags)
+    EventBuilder::new(DVM_STATUS_KIND, content, tags)
 }
 
 /// Build a result event for a completed job (unencrypted)

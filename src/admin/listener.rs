@@ -10,8 +10,8 @@ use crate::dvm_state::SharedDvmState;
 use crate::pairing::PairingState;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tokio::sync::{Notify, RwLock};
+use tracing::{debug, error, info, warn};
 
 /// Admin RPC event kind (ephemeral range — relays don't store these)
 const ADMIN_RPC_KIND: Kind = Kind::Custom(24207);
@@ -23,8 +23,9 @@ pub async fn run_admin_listener(
     state: SharedDvmState,
     pairing: Arc<RwLock<Option<PairingState>>>,
     config: Arc<Config>,
+    config_notify: Arc<Notify>,
 ) {
-    let handler = AdminHandler::new(state.clone(), client.clone(), pairing, config);
+    let handler = AdminHandler::new(state.clone(), client.clone(), pairing, config, config_notify);
 
     // Subscribe to kind 24207 events addressed to us
     let filter = Filter::new()
@@ -32,8 +33,43 @@ pub async fn run_admin_listener(
         .pubkey(keys.public_key())
         .since(Timestamp::now());
 
-    if let Err(e) = client.subscribe(vec![filter], None).await {
-        error!("Failed to subscribe to admin events: {}", e);
+    // Wait for at least one relay to connect before subscribing
+    let mut connected = false;
+    for _i in 0..20 {
+        let relays = client.relays().await;
+        for relay in relays.values() {
+            if relay.is_connected().await {
+                connected = true;
+                break;
+            }
+        }
+        if connected {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    if !connected {
+        warn!("Starting admin subscription without any connected relays");
+    }
+
+    // Try to subscribe with retries
+    let mut subscribed = false;
+    for i in 0..5 {
+        match client.subscribe(vec![filter.clone()], None).await {
+            Ok(_) => {
+                subscribed = true;
+                break;
+            }
+            Err(e) => {
+                warn!("Admin subscription attempt {} failed: {}. Retrying...", i + 1, e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+        }
+    }
+
+    if !subscribed {
+        error!("Failed to subscribe to admin events after multiple attempts");
         return;
     }
 

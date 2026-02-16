@@ -15,7 +15,7 @@ use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::process::Command as TokioCommand;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tracing::{error, info};
 
 /// Test video URL for self-test
@@ -32,6 +32,8 @@ pub struct AdminHandler {
     pairing: Arc<RwLock<Option<PairingState>>>,
     /// Runtime configuration (ffmpeg paths, temp dir, etc.)
     config: Arc<Config>,
+    /// Notify the announcement publisher when config changes
+    config_notify: Arc<Notify>,
 }
 
 impl AdminHandler {
@@ -41,12 +43,14 @@ impl AdminHandler {
         client: Client,
         pairing: Arc<RwLock<Option<PairingState>>>,
         config: Arc<Config>,
+        config_notify: Arc<Notify>,
     ) -> Self {
         Self {
             state,
             client,
             pairing,
             config,
+            config_notify,
         }
     }
 
@@ -142,7 +146,10 @@ impl AdminHandler {
         }
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg("Admin role claimed successfully"),
+            Ok(_) => {
+                self.config_notify.notify_one();
+                AdminResponse::ok_with_msg("Admin role claimed successfully")
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -181,7 +188,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg("Relays updated"),
+            Ok(_) => {
+                self.config_notify.notify_one();
+                AdminResponse::ok_with_msg("Relays updated")
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -202,7 +212,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg("Blossom servers updated"),
+            Ok(_) => {
+                self.config_notify.notify_one();
+                AdminResponse::ok_with_msg("Blossom servers updated")
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -220,7 +233,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg(format!("Blob expiration set to {} days", days)),
+            Ok(_) => {
+                self.config_notify.notify_one();
+                AdminResponse::ok_with_msg(format!("Blob expiration set to {} days", days))
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -247,7 +263,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg("Profile updated"),
+            Ok(_) => {
+                self.config_notify.notify_one();
+                AdminResponse::ok_with_msg("Profile updated")
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -264,7 +283,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => self.handle_status().await,
+            Ok(_) => {
+                self.config_notify.notify_one();
+                self.handle_status().await
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -281,7 +303,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => self.handle_status().await,
+            Ok(_) => {
+                self.config_notify.notify_one();
+                self.handle_status().await
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -439,7 +464,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => self.handle_get_config().await,
+            Ok(_) => {
+                self.config_notify.notify_one();
+                self.handle_get_config().await
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -662,7 +690,10 @@ impl AdminHandler {
         };
 
         match result {
-            Ok(_) => AdminResponse::ok_with_msg(format!("Imported: {}", imported.join(", "))),
+            Ok(_) => {
+                self.config_notify.notify_one();
+                AdminResponse::ok_with_msg(format!("Imported: {}", imported.join(", ")))
+            }
             Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
@@ -888,7 +919,8 @@ mod tests {
             .expect("Failed to create test config"),
         );
 
-        let handler = AdminHandler::new(state, client, pairing, config);
+        let config_notify = Arc::new(Notify::new());
+        let handler = AdminHandler::new(state, client, pairing, config, config_notify);
 
         (handler, dvm_keys, admin_keys)
     }

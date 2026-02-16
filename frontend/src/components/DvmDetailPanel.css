@@ -61,6 +61,11 @@
   color: #fbbf24;
 }
 
+.status-badge.offline {
+  background: rgba(102, 102, 102, 0.2);
+  color: #888;
+}
+
 .action-btn {
   padding: 0.5rem 1rem;
   font-size: 0.875rem;

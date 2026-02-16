@@ -9,6 +9,7 @@ use dvm_video_processing::startup::initialize;
 use dvm_video_processing::video::{HwAccel, VideoProcessor};
 use dvm_video_processing::web::run_server;
 use std::sync::Arc;
+use tokio::sync::Notify;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,6 +28,9 @@ async fn main() -> anyhow::Result<()> {
 
     let startup = initialize().await.expect("Failed to initialize DVM");
 
+    // Create config change notifier (shared between admin handler and announcement publisher)
+    let config_notify = Arc::new(Notify::new());
+
     // Spawn web server immediately
     let web_handle = tokio::spawn({
         let config = startup.config.clone();
@@ -44,9 +48,30 @@ async fn main() -> anyhow::Result<()> {
         let state = startup.state.clone();
         let pairing = startup.pairing.clone();
         let config = startup.config.clone();
+        let config_notify = config_notify.clone();
         async move {
-            run_admin_listener(client, keys, state, pairing, config).await;
+            run_admin_listener(client, keys, state, pairing, config, config_notify).await;
         }
+    });
+
+    // Start announcement publisher before pairing loop so it's already listening
+    // for config_notify when pairing completes. It will skip the initial publish
+    // if no admin is configured and wait for the pairing notification instead.
+    let hwaccel = HwAccel::detect();
+    let publisher = Arc::new(EventPublisher::new(
+        startup.config.clone(),
+        startup.client.clone(),
+    ));
+    let announcement_publisher = AnnouncementPublisher::new(
+        startup.config.clone(),
+        startup.state.clone(),
+        publisher,
+        hwaccel,
+        config_notify,
+    );
+
+    let announcement_handle = tokio::spawn(async move {
+        announcement_publisher.run().await;
     });
 
     if startup.needs_pairing {
@@ -58,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
             let state = startup.state.read().await;
             if state.config.has_admin() {
                 info!("Admin paired, starting normal operation");
-                
+
                 // Add configured relays after pairing
                 if !state.config.relays.is_empty() {
                     info!("Adding configured relays...");
@@ -67,31 +92,12 @@ async fn main() -> anyhow::Result<()> {
                             tracing::warn!("Failed to add relay {}: {}", relay, e);
                         }
                     }
+                    startup.client.connect().await;
                 }
                 break;
             }
         }
     }
-
-    // Admin is now configured - start announcement publisher
-    info!(
-        "Starting DVM announcement publisher (admin: {})",
-        startup.config.admin_pubkey.as_deref().unwrap_or("MISSING")
-    );
-    let hwaccel = HwAccel::detect();
-    let publisher = Arc::new(EventPublisher::new(
-        startup.config.clone(),
-        startup.client.clone(),
-    ));
-    let announcement_publisher = AnnouncementPublisher::new(
-        startup.config.clone(),
-        publisher,
-        hwaccel,
-    );
-
-    let announcement_handle = tokio::spawn(async move {
-        announcement_publisher.run().await;
-    });
 
     // Create job processing channel
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(32);
@@ -99,8 +105,9 @@ async fn main() -> anyhow::Result<()> {
     // Spawn subscription manager (listens for kind 5207 requests)
     let subscription_handle = tokio::spawn({
         let config = startup.config.clone();
+        let client = startup.client.clone();
         async move {
-            match SubscriptionManager::new(config).await {
+            match SubscriptionManager::new(config, client).await {
                 Ok(manager) => {
                     if let Err(e) = manager.run(job_tx).await {
                         tracing::error!("Subscription manager error: {}", e);
@@ -118,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
         startup.config.clone(),
         startup.client.clone(),
     ));
-    let blossom = Arc::new(BlossomClient::new(startup.config.clone()));
+    let blossom = Arc::new(BlossomClient::new(startup.config.clone(), startup.state.clone()));
     let processor = Arc::new(VideoProcessor::new(startup.config.clone()));
     let job_handler = JobHandler::new(
         startup.config.clone(),

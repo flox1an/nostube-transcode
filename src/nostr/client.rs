@@ -15,14 +15,7 @@ pub struct SubscriptionManager {
 }
 
 impl SubscriptionManager {
-    pub async fn new(config: Arc<Config>) -> Result<Self, DvmError> {
-        let client = Client::new(&config.nostr_keys);
-
-        // Add relays
-        for relay in &config.nostr_relays {
-            client.add_relay(relay.as_str()).await?;
-        }
-
+    pub async fn new(config: Arc<Config>, client: Client) -> Result<Self, DvmError> {
         Ok(Self { config, client })
     }
 
@@ -36,6 +29,32 @@ impl SubscriptionManager {
         info!("Connecting to relays...");
         self.client.connect().await;
 
+        // Wait for at least one relay to connect before subscribing
+        // This prevents "relay not connected" errors from nostr-sdk
+        let mut connected = false;
+        for i in 0..20 {
+            let relays = self.client.relays().await;
+            for relay in relays.values() {
+                if relay.is_connected().await {
+                    connected = true;
+                    break;
+                }
+            }
+            
+            if connected {
+                break;
+            }
+
+            if i % 5 == 0 && i > 0 {
+                info!("Waiting for relays to connect... (attempt {})", i);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        if !connected {
+            warn!("Starting subscription without any connected relays. This may fail.");
+        }
+
         // Subscribe to DVM requests addressed to this DVM
         let dvm_pubkey = self.config.nostr_keys.public_key();
         let filter = Filter::new()
@@ -43,9 +62,27 @@ impl SubscriptionManager {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::P), [dvm_pubkey.to_hex()])
             .since(Timestamp::now());
 
-        self.client.subscribe(vec![filter], None).await?;
+        // Try to subscribe with retries
+        let mut last_error = None;
+        for i in 0..5 {
+            match self.client.subscribe(vec![filter.clone()], None).await {
+                Ok(_) => {
+                    info!("Subscribed to DVM video transform requests");
+                    last_error = None;
+                    break;
+                }
+                Err(e) => {
+                    warn!("Subscription attempt {} failed: {}. Retrying in 2s...", i + 1, e);
+                    last_error = Some(e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
 
-        info!("Subscribed to DVM video transform requests");
+        if let Some(e) = last_error {
+            error!("Failed to subscribe to DVM requests after multiple attempts: {}", e);
+            return Err(DvmError::Nostr(e));
+        }
 
         // Deduplication set wrapped in Arc<Mutex> for sharing across async closure
         let seen: Arc<Mutex<HashSet<EventId>>> = Arc::new(Mutex::new(HashSet::new()));
