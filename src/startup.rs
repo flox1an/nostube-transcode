@@ -91,6 +91,15 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
         remote_config.admin = Some(operator_pubkey.to_hex());
     }
 
+    // Seed bootstrap relays into config when no relays are configured
+    if remote_config.relays.is_empty() {
+        remote_config.relays = get_bootstrap_relays()
+            .into_iter()
+            .map(|u| u.to_string())
+            .collect();
+        tracing::info!("Using bootstrap relays as default config relays");
+    }
+
     tracing::info!(
         "Admin configured: {}",
         remote_config.admin.as_deref().unwrap_or("unknown")
