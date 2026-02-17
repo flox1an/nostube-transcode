@@ -7,15 +7,15 @@ use crate::admin::commands::*;
 use crate::config::Config;
 use crate::dvm::events::{Codec, Resolution};
 use crate::dvm_state::SharedDvmState;
-use crate::pairing::PairingState;
 use crate::remote_config::save_config;
 use crate::video::hwaccel::HwAccel;
 use crate::video::{VideoMetadata, VideoProcessor};
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::process::Command as TokioCommand;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::{error, info};
 
 /// Test video URL for self-test
@@ -28,8 +28,6 @@ pub struct AdminHandler {
     state: SharedDvmState,
     /// Nostr client for publishing config updates
     client: Client,
-    /// Active pairing state (if pairing is in progress)
-    pairing: Arc<RwLock<Option<PairingState>>>,
     /// Runtime configuration (ffmpeg paths, temp dir, etc.)
     config: Arc<Config>,
     /// Notify the announcement publisher when config changes
@@ -41,16 +39,44 @@ impl AdminHandler {
     pub fn new(
         state: SharedDvmState,
         client: Client,
-        pairing: Arc<RwLock<Option<PairingState>>>,
         config: Arc<Config>,
         config_notify: Arc<Notify>,
     ) -> Self {
         Self {
             state,
             client,
-            pairing,
             config,
             config_notify,
+        }
+    }
+
+    /// Ensures the client's relay pool includes all relays from the config.
+    ///
+    /// Adds any relays that aren't already connected. Bootstrap relays remain
+    /// connected from startup, so config is always findable on restart.
+    async fn sync_relays(&self, relays: &[String]) {
+        let connected: HashSet<String> = self
+            .client
+            .relays()
+            .await
+            .keys()
+            .map(|url| url.to_string().trim_end_matches('/').to_string())
+            .collect();
+
+        let mut added = false;
+        for relay in relays {
+            let normalized = relay.trim_end_matches('/').to_string();
+            if !connected.contains(&normalized) {
+                if let Err(e) = self.client.add_relay(relay.clone()).await {
+                    tracing::warn!("Failed to add relay {}: {}", relay, e);
+                } else {
+                    added = true;
+                }
+            }
+        }
+
+        if added {
+            self.client.connect().await;
         }
     }
 
@@ -59,12 +85,7 @@ impl AdminHandler {
     /// Validates that the sender is authorized (either admin or during pairing)
     /// and dispatches to the appropriate handler.
     pub async fn handle(&self, command: AdminCommand, sender: PublicKey) -> AdminResponse {
-        // ClaimAdmin is special - it doesn't require prior authorization
-        if let AdminCommand::ClaimAdmin { ref secret } = command {
-            return self.handle_claim_admin(secret, sender).await;
-        }
-
-        // All other commands require the sender to be the admin
+        // All commands require the sender to be the admin
         let state = self.state.read().await;
         let is_admin = state
             .config
@@ -79,7 +100,6 @@ impl AdminHandler {
 
         // Dispatch to handler
         match command {
-            AdminCommand::ClaimAdmin { .. } => unreachable!(),
             AdminCommand::GetConfig => self.handle_get_config().await,
             AdminCommand::SetRelays { relays } => self.handle_set_relays(relays).await,
             AdminCommand::SetBlossomServers { servers } => {
@@ -105,52 +125,6 @@ impl AdminHandler {
             AdminCommand::SelfTest => self.handle_self_test().await,
             AdminCommand::SystemInfo => self.handle_system_info().await,
             AdminCommand::ImportEnvConfig => self.handle_import_env_config().await,
-        }
-    }
-
-    /// Handles the ClaimAdmin command.
-    ///
-    /// Verifies the pairing secret and sets the sender as admin.
-    async fn handle_claim_admin(&self, secret: &str, sender: PublicKey) -> AdminResponse {
-        // Check if there's already an admin
-        {
-            let state = self.state.read().await;
-            if state.config.has_admin() {
-                return AdminResponse::error("Admin already configured");
-            }
-        }
-
-        // Verify pairing secret
-        let pairing_valid = {
-            let pairing = self.pairing.read().await;
-            pairing.as_ref().map(|p| p.verify(secret)).unwrap_or(false)
-        };
-
-        if !pairing_valid {
-            return AdminResponse::error("Invalid or expired pairing secret");
-        }
-
-        // Set admin and save config
-        let result = {
-            let mut state = self.state.write().await;
-            state.config.admin = Some(sender.to_hex());
-
-            // Save config to relays
-            save_config(&self.client, &state.keys, &state.config).await
-        };
-
-        // Clear pairing state
-        {
-            let mut pairing = self.pairing.write().await;
-            *pairing = None;
-        }
-
-        match result {
-            Ok(_) => {
-                self.config_notify.notify_one();
-                AdminResponse::ok_with_msg("Admin role claimed successfully")
-            }
-            Err(e) => AdminResponse::error(format!("Failed to save config: {}", e)),
         }
     }
 
@@ -180,6 +154,9 @@ impl AdminHandler {
                 return AdminResponse::error(format!("Invalid relay URL: {}", relay));
             }
         }
+
+        // Connect to new relays before saving so config is published there too
+        self.sync_relays(&relays).await;
 
         let result = {
             let mut state = self.state.write().await;
@@ -441,6 +418,11 @@ impl AdminHandler {
             }
         }
 
+        // Connect to new relays before saving so config is published there too
+        if let Some(ref r) = relays {
+            self.sync_relays(r).await;
+        }
+
         let result = {
             let mut state = self.state.write().await;
 
@@ -649,6 +631,13 @@ impl AdminHandler {
 
         // Track what was imported
         let mut imported = Vec::new();
+
+        // Connect to new relays before saving so config is published there too
+        if let Some(ref r) = relays {
+            if !r.is_empty() {
+                self.sync_relays(r).await;
+            }
+        }
 
         let result = {
             let mut state = self.state.write().await;
@@ -906,8 +895,6 @@ mod tests {
         // Create a client that won't actually connect
         let client = Client::new(dvm_keys.clone());
 
-        let pairing = Arc::new(RwLock::new(None));
-
         // Create a minimal config for testing
         let config = Arc::new(
             Config::from_remote(
@@ -920,7 +907,7 @@ mod tests {
         );
 
         let config_notify = Arc::new(Notify::new());
-        let handler = AdminHandler::new(state, client, pairing, config, config_notify);
+        let handler = AdminHandler::new(state, client, config, config_notify);
 
         (handler, dvm_keys, admin_keys)
     }
@@ -978,24 +965,6 @@ mod tests {
         } else {
             panic!("Expected StatusResponse");
         }
-    }
-
-    #[tokio::test]
-    async fn test_claim_admin_already_configured() {
-        let (handler, _dvm_keys, _admin_keys) = create_test_handler().await;
-
-        let new_user = Keys::generate();
-        let response = handler
-            .handle(
-                AdminCommand::ClaimAdmin {
-                    secret: "test-secret".to_string(),
-                },
-                new_user.public_key(),
-            )
-            .await;
-
-        assert!(!response.ok);
-        assert_eq!(response.error, Some("Admin already configured".to_string()));
     }
 
     #[tokio::test]

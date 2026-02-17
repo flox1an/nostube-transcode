@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum AdminCommand {
-    /// Claim admin role using the pairing secret
-    ClaimAdmin { secret: String },
     /// Get current configuration
     GetConfig,
     /// Update relay list
@@ -82,13 +80,6 @@ impl AdminRequest {
     /// Convert this wire-format request into an internal `AdminCommand`.
     pub fn to_command(&self) -> Result<AdminCommand, String> {
         match self.method.as_str() {
-            "claim_admin" => {
-                let secret = self.params.get("secret")
-                    .and_then(|v| v.as_str())
-                    .ok_or("claim_admin requires 'secret' param")?
-                    .to_string();
-                Ok(AdminCommand::ClaimAdmin { secret })
-            }
             "get_config" => Ok(AdminCommand::GetConfig),
             "set_relays" => {
                 let relays = self.params.get("relays")
@@ -497,19 +488,6 @@ mod tests {
         assert_eq!(req.method, "get_config");
         let cmd = req.to_command().unwrap();
         assert_eq!(cmd, AdminCommand::GetConfig);
-    }
-
-    #[test]
-    fn test_parse_request_claim_admin() {
-        let json = r#"{"id":"req-2","method":"claim_admin","params":{"secret":"abc-123"}}"#;
-        let req = parse_request(json).unwrap();
-        let cmd = req.to_command().unwrap();
-        assert_eq!(
-            cmd,
-            AdminCommand::ClaimAdmin {
-                secret: "abc-123".to_string()
-            }
-        );
     }
 
     #[test]

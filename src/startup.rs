@@ -1,36 +1,33 @@
 //! DVM startup orchestration.
 //!
-//! Handles the complete startup sequence including identity loading,
-//! config fetching, and pairing mode.
+//! Handles the complete startup sequence including identity loading
+//! and config fetching.
 
-use crate::bootstrap::{get_admin_app_urls, get_bootstrap_relays};
+use crate::bootstrap::get_bootstrap_relays;
 use crate::config::Config;
 use crate::dvm_state::{DvmState, SharedDvmState};
 use crate::identity::load_or_generate_identity;
-use crate::pairing::PairingState;
 use crate::remote_config::{fetch_config, RemoteConfig};
 use crate::util::ffmpeg_discovery::FfmpegPaths;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Result of startup initialization
 pub struct StartupResult {
     pub keys: Keys,
     pub client: Client,
     pub state: SharedDvmState,
-    pub pairing: Arc<RwLock<Option<PairingState>>>,
-    pub needs_pairing: bool,
     pub config: Arc<Config>,
 }
 
 /// Initialize the DVM on startup.
 ///
 /// 1. Load or generate identity
-/// 2. Connect to bootstrap relays
-/// 3. Fetch remote config (if exists)
-/// 4. Create DVM state
-/// 5. Enter pairing mode if no admin configured
+/// 2. Read OPERATOR_NPUB (required)
+/// 3. Connect to bootstrap relays
+/// 4. Fetch remote config (if exists)
+/// 5. Set admin from OPERATOR_NPUB if not already in remote config
+/// 6. Create DVM state
 pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
     // Step 1: Load or generate identity
     tracing::info!("Loading identity...");
@@ -38,7 +35,29 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
     let npub = keys.public_key().to_bech32().unwrap_or_default();
     tracing::info!("DVM pubkey: {}", npub);
 
-    // Step 2: Connect to bootstrap relays
+    // Step 2: Read and validate OPERATOR_NPUB
+    let operator_npub = std::env::var("OPERATOR_NPUB").unwrap_or_else(|_| {
+        eprintln!("ERROR: OPERATOR_NPUB environment variable is required.");
+        eprintln!("Set it to the npub or hex pubkey of the DVM operator.");
+        eprintln!("Example: OPERATOR_NPUB=npub1... cargo run");
+        std::process::exit(1);
+    });
+
+    let operator_pubkey = PublicKey::parse(&operator_npub).unwrap_or_else(|e| {
+        eprintln!(
+            "ERROR: Invalid OPERATOR_NPUB '{}': {}",
+            operator_npub, e
+        );
+        eprintln!("Must be a valid npub (npub1...) or hex public key.");
+        std::process::exit(1);
+    });
+
+    tracing::info!(
+        "Operator pubkey: {}",
+        operator_pubkey.to_bech32().unwrap_or_default()
+    );
+
+    // Step 3: Connect to bootstrap relays
     tracing::info!("Connecting to bootstrap relays...");
     let client = Client::new(keys.clone());
 
@@ -50,9 +69,9 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
 
     client.connect().await;
 
-    // Step 3: Fetch remote config
+    // Step 4: Fetch remote config
     tracing::info!("Fetching remote configuration...");
-    let remote_config = match fetch_config(&client, &keys).await {
+    let mut remote_config = match fetch_config(&client, &keys).await {
         Ok(Some(config)) => {
             tracing::info!("Loaded remote config (version {})", config.version);
             config
@@ -67,41 +86,32 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
         }
     };
 
-    // Step 4: Check if we need pairing
-    let needs_pairing = !remote_config.has_admin();
-    let pairing = Arc::new(RwLock::new(None));
-
-    if needs_pairing {
-        tracing::info!("No admin configured, entering pairing mode");
-
-        // Create pairing state and display
-        let pairing_state = PairingState::new(keys.public_key());
-        pairing_state.display_urls(&get_admin_app_urls());
-
-        *pairing.write().await = Some(pairing_state);
-    } else {
-        tracing::info!(
-            "Admin configured: {}",
-            remote_config.admin.as_deref().unwrap_or("unknown")
-        );
-
-        // Connect to configured relays (in addition to bootstrap)
-        if !remote_config.relays.is_empty() {
-            tracing::info!("Adding configured relays...");
-            for relay in &remote_config.relays {
-                if let Err(e) = client.add_relay(relay.clone()).await {
-                    tracing::warn!("Failed to add relay {}: {}", relay, e);
-                }
-            }
-            client.connect().await;
-        }
+    // Step 5: Ensure admin is set from OPERATOR_NPUB
+    if !remote_config.has_admin() {
+        remote_config.admin = Some(operator_pubkey.to_hex());
     }
 
-    // Step 5: Discover FFmpeg binaries
+    tracing::info!(
+        "Admin configured: {}",
+        remote_config.admin.as_deref().unwrap_or("unknown")
+    );
+
+    // Connect to configured relays (in addition to bootstrap)
+    if !remote_config.relays.is_empty() {
+        tracing::info!("Adding configured relays...");
+        for relay in &remote_config.relays {
+            if let Err(e) = client.add_relay(relay.clone()).await {
+                tracing::warn!("Failed to add relay {}: {}", relay, e);
+            }
+        }
+        client.connect().await;
+    }
+
+    // Step 6: Discover FFmpeg binaries
     tracing::info!("Discovering FFmpeg binaries...");
     let ffmpeg_paths = FfmpegPaths::discover()?;
 
-    // Step 6: Create Config from RemoteConfig
+    // Step 7: Create Config from RemoteConfig
     let config = Arc::new(Config::from_remote(
         keys.clone(),
         &remote_config,
@@ -109,15 +119,13 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
         ffmpeg_paths.ffprobe,
     )?);
 
-    // Step 7: Create DVM state
+    // Step 8: Create DVM state
     let state = DvmState::new_shared(keys.clone(), remote_config);
 
     Ok(StartupResult {
         keys,
         client,
         state,
-        pairing,
-        needs_pairing,
         config,
     })
 }
@@ -132,24 +140,23 @@ mod tests {
         let keys = Keys::generate();
         let client = Client::new(keys.clone());
         let state = DvmState::new_shared(keys.clone(), RemoteConfig::new());
-        let pairing = Arc::new(RwLock::new(None));
-        let config = Arc::new(Config::from_remote(
-            keys.clone(),
-            &RemoteConfig::new(),
-            std::path::PathBuf::from("ffmpeg"),
-            std::path::PathBuf::from("ffprobe"),
-        ).unwrap());
+        let config = Arc::new(
+            Config::from_remote(
+                keys.clone(),
+                &RemoteConfig::new(),
+                std::path::PathBuf::from("ffmpeg"),
+                std::path::PathBuf::from("ffprobe"),
+            )
+            .unwrap(),
+        );
 
         let result = StartupResult {
             keys: keys.clone(),
             client,
             state,
-            pairing,
-            needs_pairing: true,
             config,
         };
 
-        assert!(result.needs_pairing);
         assert_eq!(result.keys.public_key(), keys.public_key());
     }
 }

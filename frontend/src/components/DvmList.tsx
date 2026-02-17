@@ -37,10 +37,9 @@ interface DvmListProps {
   userPubkey: string;
   selectedDvm: UnifiedDvm | null;
   onSelect: (dvm: UnifiedDvm) => void;
-  onPairNew: () => void;
 }
 
-export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmListProps) {
+export function DvmList({ userPubkey, selectedDvm, onSelect }: DvmListProps) {
   const [filter, setFilter] = useState<DvmFilter>("mine");
   const [allDvms, setAllDvms] = useState<UnifiedDvm[]>([]);
   const [myDvms, setMyDvms] = useState<Map<string, UnifiedDvm>>(new Map());
@@ -220,11 +219,6 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
             All DVMs
           </button>
         </div>
-        {filter === "mine" && (
-          <button className="pair-button" onClick={onPairNew}>
-            + Pair
-          </button>
-        )}
       </div>
 
       <div className="dvm-list-content">
@@ -238,10 +232,7 @@ export function DvmList({ userPubkey, selectedDvm, onSelect, onPairNew }: DvmLis
         {!loading && displayDvms.length === 0 && (
           <div className="dvm-list-empty">
             {filter === "mine" ? (
-              <>
-                <p>No DVMs paired yet.</p>
-                <button onClick={onPairNew}>Pair a DVM</button>
-              </>
+              <p>No DVMs found.</p>
             ) : (
               <p>No DVMs found on the network.</p>
             )}

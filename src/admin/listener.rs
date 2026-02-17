@@ -7,10 +7,9 @@ use crate::admin::commands::{parse_request, AdminRequest, AdminResponseWire};
 use crate::admin::handler::AdminHandler;
 use crate::config::Config;
 use crate::dvm_state::SharedDvmState;
-use crate::pairing::PairingState;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
 /// Admin RPC event kind (ephemeral range — relays don't store these)
@@ -21,11 +20,10 @@ pub async fn run_admin_listener(
     client: Client,
     keys: Keys,
     state: SharedDvmState,
-    pairing: Arc<RwLock<Option<PairingState>>>,
     config: Arc<Config>,
     config_notify: Arc<Notify>,
 ) {
-    let handler = AdminHandler::new(state.clone(), client.clone(), pairing, config, config_notify);
+    let handler = AdminHandler::new(state.clone(), client.clone(), config, config_notify);
 
     // Subscribe to kind 24207 events addressed to us
     let filter = Filter::new()

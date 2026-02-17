@@ -12,7 +12,6 @@ pub mod dvm_state;
 pub mod error;
 pub mod identity;
 pub mod nostr;
-pub mod pairing;
 pub mod remote_config;
 pub mod startup;
 pub mod util;

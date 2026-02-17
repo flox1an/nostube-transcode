@@ -46,21 +46,19 @@ async fn main() -> anyhow::Result<()> {
         let client = startup.client.clone();
         let keys = startup.keys.clone();
         let state = startup.state.clone();
-        let pairing = startup.pairing.clone();
         let config = startup.config.clone();
         let config_notify = config_notify.clone();
         async move {
-            run_admin_listener(client, keys, state, pairing, config, config_notify).await;
+            run_admin_listener(client, keys, state, config, config_notify).await;
         }
     });
 
-    // Start announcement publisher before pairing loop so it's already listening
-    // for config_notify when pairing completes. It will skip the initial publish
-    // if no admin is configured and wait for the pairing notification instead.
+    // Start announcement publisher
     let hwaccel = HwAccel::detect();
     let publisher = Arc::new(EventPublisher::new(
         startup.config.clone(),
         startup.client.clone(),
+        startup.state.clone(),
     ));
     let announcement_publisher = AnnouncementPublisher::new(
         startup.config.clone(),
@@ -73,31 +71,6 @@ async fn main() -> anyhow::Result<()> {
     let announcement_handle = tokio::spawn(async move {
         announcement_publisher.run().await;
     });
-
-    if startup.needs_pairing {
-        // In pairing mode, wait for admin to claim
-        info!("Waiting for admin pairing...");
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-            let state = startup.state.read().await;
-            if state.config.has_admin() {
-                info!("Admin paired, starting normal operation");
-
-                // Add configured relays after pairing
-                if !state.config.relays.is_empty() {
-                    info!("Adding configured relays...");
-                    for relay in &state.config.relays {
-                        if let Err(e) = startup.client.add_relay(relay.clone()).await {
-                            tracing::warn!("Failed to add relay {}: {}", relay, e);
-                        }
-                    }
-                    startup.client.connect().await;
-                }
-                break;
-            }
-        }
-    }
 
     // Create job processing channel
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(32);
@@ -124,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
     let job_publisher = Arc::new(EventPublisher::new(
         startup.config.clone(),
         startup.client.clone(),
+        startup.state.clone(),
     ));
     let blossom = Arc::new(BlossomClient::new(startup.config.clone(), startup.state.clone()));
     let processor = Arc::new(VideoProcessor::new(startup.config.clone()));

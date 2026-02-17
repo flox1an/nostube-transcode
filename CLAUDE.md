@@ -89,19 +89,19 @@ npm run lint
 
 ## Remote Configuration
 
-The DVM uses zero-config startup:
+The DVM startup flow:
 
 1. Generate an identity (saved to `~/.local/share/dvm-video/identity.key`)
-2. Connect to bootstrap relays
-3. Enter pairing mode, displaying a QR code
-4. Wait for admin to claim via the web app
-5. Load configuration from Nostr (NIP-78)
+2. Read `OPERATOR_NPUB` env var (required, panics if missing/invalid)
+3. Connect to bootstrap relays
+4. Fetch remote config from Nostr (NIP-78) if it exists
+5. Set admin from `OPERATOR_NPUB` if not already in remote config
+6. Start normal operation
 
 ### Remote Config Modules
 - `src/identity.rs` - Identity key persistence
 - `src/bootstrap.rs` - Bootstrap relay management
 - `src/remote_config.rs` - NIP-78 config storage
-- `src/pairing.rs` - Pairing mode and QR codes
 - `src/admin/` - Admin command handling
 - `src/dvm_state.rs` - Runtime state management
 - `src/startup.rs` - Startup orchestration
@@ -118,10 +118,11 @@ Sent as NIP-04 encrypted DMs:
 
 ## Environment Variables
 
-All configuration is managed via remote config (NIP-78). Optional environment variables:
+Required:
+- `OPERATOR_NPUB` - Nostr pubkey (npub or hex) of the DVM operator/admin. The DVM refuses to start without it.
 
-- `BOOTSTRAP_RELAYS` - Comma-separated bootstrap relays (default: wss://relay.damus.io,wss://nos.lol)
-- `DVM_ADMIN_APP_URL` - Admin web app URL for pairing links
+Optional (runtime configuration is managed via remote config NIP-78):
+- `BOOTSTRAP_RELAYS` - Comma-separated bootstrap relays (default: wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net)
 - `HTTP_PORT` - Default 3000
 - `TEMP_DIR` - Default ./temp
 - `FFMPEG_PATH` / `FFPROBE_PATH` - Default uses system PATH

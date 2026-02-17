@@ -1,10 +1,8 @@
-import { useState, useCallback, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState, useCallback } from "react";
 import { useCurrentUser } from "./hooks/useCurrentUser";
 import { LoginDialog } from "./components/LoginDialog";
 import { DvmList, type UnifiedDvm } from "./components/DvmList";
 import { DvmDetailPanel } from "./components/DvmDetailPanel";
-import { PairDvmModal } from "./components/PairDvmModal";
 import "./Dashboard.css";
 
 import { UserAvatar } from "./components/UserAvatar";
@@ -13,17 +11,8 @@ import { IconDivico, IconTv } from "./components/Icons";
 
 export function Dashboard() {
   const { user, isLoggedIn, logout } = useCurrentUser();
-  const [searchParams] = useSearchParams();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedDvm, setSelectedDvm] = useState<UnifiedDvm | null>(null);
-  const [showPairModal, setShowPairModal] = useState(false);
-
-  // Auto-open pair modal if params are present
-  useEffect(() => {
-    if (isLoggedIn && (searchParams.get("dvm") || searchParams.get("secret"))) {
-      setShowPairModal(true);
-    }
-  }, [isLoggedIn, searchParams]);
 
   const handleLogout = useCallback(() => {
     logout();
@@ -32,14 +21,6 @@ export function Dashboard() {
 
   const handleDvmSelect = useCallback((dvm: UnifiedDvm) => {
     setSelectedDvm(dvm);
-  }, []);
-
-  const handlePairNew = useCallback(() => {
-    setShowPairModal(true);
-  }, []);
-
-  const handlePairComplete = useCallback(() => {
-    setShowPairModal(false);
   }, []);
 
   // Not logged in - show login screen
@@ -85,7 +66,6 @@ export function Dashboard() {
               userPubkey={user.pubkey}
               selectedDvm={selectedDvm}
               onSelect={handleDvmSelect}
-              onPairNew={handlePairNew}
             />
           </aside>
           <section className="dvm-detail-panel-container">
@@ -103,13 +83,6 @@ export function Dashboard() {
           </section>
         </div>
       </main>
-
-      {showPairModal && (
-        <PairDvmModal
-          onClose={() => setShowPairModal(false)}
-          onSuccess={handlePairComplete}
-        />
-      )}
     </div>
   );
 }

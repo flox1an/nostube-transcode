@@ -135,26 +135,13 @@ impl AnnouncementPublisher {
     /// Run the announcement publisher, publishing immediately and then periodically.
     ///
     /// Also republishes immediately when notified of config changes.
-    /// If no admin is configured yet (pairing mode), skips the initial publish
-    /// and waits for a config change notification (e.g. after pairing completes).
     pub async fn run(&self) {
         info!("Announcement publisher started");
 
         // Give relays a few seconds to connect before the first announcement
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Only publish initial announcement if admin is already configured.
-        // During pairing mode, the first announcement will be triggered by
-        // config_notify once an admin claims the DVM.
-        {
-            let state = self.state.read().await;
-            if state.config.has_admin() {
-                drop(state);
-                self.publish_announcement().await;
-            } else {
-                info!("No admin configured yet, waiting for pairing to complete");
-            }
-        }
+        self.publish_announcement().await;
 
         // Then publish every hour or when config changes
         let mut ticker = interval(Duration::from_secs(3600));

@@ -3,7 +3,7 @@
 export const RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
-  "wss://haven.slidestr.net",
+  "wss://relay.primal.net",
 ];
 
 // Nostr event kinds for DVM protocol

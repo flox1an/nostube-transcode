@@ -13,7 +13,6 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         {/* Legacy redirects */}
         <Route path="/admin/*" element={<RedirectToRoot />} />
-        <Route path="/pair" element={<RedirectToRoot />} />
         <Route path="*" element={<RedirectToRoot />} />
       </Routes>
     </BrowserRouter>

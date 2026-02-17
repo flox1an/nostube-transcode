@@ -2,7 +2,6 @@ use nostr_sdk::Keys;
 use std::path::PathBuf;
 use url::Url;
 
-use crate::bootstrap::get_bootstrap_relays;
 use crate::error::ConfigError;
 use crate::remote_config::RemoteConfig;
 
@@ -29,15 +28,11 @@ impl Config {
         ffmpeg_path: PathBuf,
         ffprobe_path: PathBuf,
     ) -> Result<Self, ConfigError> {
-        let relays: Vec<Url> = if remote.relays.is_empty() {
-            get_bootstrap_relays()
-        } else {
-            remote
-                .relays
-                .iter()
-                .filter_map(|s| Url::parse(s).ok())
-                .collect()
-        };
+        let relays: Vec<Url> = remote
+            .relays
+            .iter()
+            .filter_map(|s| Url::parse(s).ok())
+            .collect();
 
         let blossom: Vec<Url> = remote
             .blossom_servers

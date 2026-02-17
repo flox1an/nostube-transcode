@@ -1,63 +1,13 @@
 //! Integration tests for remote configuration.
 //!
-//! Tests the interaction between identity, pairing, config, and admin modules.
+//! Tests the interaction between identity, config, and admin modules.
 
 use dvm_video_processing::admin::commands::{
     parse_request, AdminCommand, AdminResponse, AdminResponseWire, ConfigData, ConfigResponse,
     ResponseData, StatusResponse,
 };
-use dvm_video_processing::bootstrap::{
-    get_admin_app_url, get_bootstrap_relays, DEFAULT_BOOTSTRAP_RELAYS,
-};
-use dvm_video_processing::pairing::PairingState;
+use dvm_video_processing::bootstrap::{get_bootstrap_relays, DEFAULT_BOOTSTRAP_RELAYS};
 use dvm_video_processing::remote_config::RemoteConfig;
-use nostr_sdk::Keys;
-
-/// Test the full pairing flow: identity -> pairing state -> URL generation -> claim parsing
-#[test]
-fn test_full_pairing_flow() {
-    // Step 1: Generate identity (in real code this would be load_or_generate_identity)
-    let keys = Keys::generate();
-
-    // Step 2: Create pairing state
-    let pairing_state = PairingState::new(keys.public_key());
-
-    // Step 3: Verify pairing state is valid
-    assert!(pairing_state.is_valid());
-
-    // Step 4: Generate pairing URL
-    let url = pairing_state.pairing_url("https://admin.example.com");
-    assert!(url.starts_with("https://admin.example.com/admin/pair?"));
-    assert!(url.contains("dvm=npub1"));
-    assert!(url.contains("secret="));
-
-    // Step 5: Extract secret from URL (simulating what admin app would do)
-    let secret = url
-        .split("secret=")
-        .nth(1)
-        .expect("URL should contain secret");
-
-    // Step 6: Verify correct secret works
-    assert!(pairing_state.verify(secret));
-
-    // Verify wrong secret fails
-    assert!(!pairing_state.verify("wrong-secr-etxx"));
-
-    // Step 7: Parse the claim command (simulating admin sending v2 request)
-    let claim_json = format!(
-        r#"{{"id":"req-1","method":"claim_admin","params":{{"secret":"{}"}}}}"#,
-        secret
-    );
-    let req = parse_request(&claim_json).unwrap();
-    let cmd = req.to_command().unwrap();
-
-    match cmd {
-        AdminCommand::ClaimAdmin { secret: s } => {
-            assert_eq!(s, secret);
-        }
-        _ => panic!("Expected ClaimAdmin command"),
-    }
-}
 
 /// Test config serialization roundtrip
 #[test]
@@ -119,12 +69,6 @@ fn test_bootstrap_relays() {
     for relay in &relays {
         assert!(relay.scheme() == "wss" || relay.scheme() == "ws");
     }
-
-    // Test admin app URL default (uses local HTTP server)
-    std::env::remove_var("DVM_ADMIN_APP_URL");
-    std::env::remove_var("HTTP_PORT");
-    let admin_url = get_admin_app_url();
-    assert_eq!(admin_url, "http://localhost:3000");
 }
 
 /// Test admin response serialization via v2 wire format
@@ -151,12 +95,12 @@ fn test_admin_response_serialization() {
     // Test error response
     let err_wire = AdminResponseWire::from_response(
         "req-3".to_string(),
-        AdminResponse::error("Invalid pairing secret"),
+        AdminResponse::error("Unauthorized"),
     );
     let err_json = serde_json::to_string(&err_wire).unwrap();
     let err_parsed: serde_json::Value = serde_json::from_str(&err_json).unwrap();
     assert_eq!(err_parsed["id"], "req-3");
-    assert_eq!(err_parsed["error"], "Invalid pairing secret");
+    assert_eq!(err_parsed["error"], "Unauthorized");
     assert!(err_parsed.get("result").is_none() || err_parsed["result"].is_null());
 
     // Test config response with data

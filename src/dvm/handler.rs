@@ -116,6 +116,11 @@ impl JobHandler {
         let job_id = job.event_id();
         let requester = job.requester();
 
+        // Ensure job relays are in the client pool
+        if !job.relays.is_empty() {
+            self.publisher.ensure_relays_connected(&job.relays).await;
+        }
+
         // Send immediate acknowledgment
         self.send_status(
             &job,
@@ -176,7 +181,7 @@ impl JobHandler {
                     &dvm_result,
                     self.get_encryption_keys(&job),
                 );
-                self.publisher.publish(event).await?;
+                self.publisher.publish_for_job(event, &job.relays).await?;
 
                 // Send success status
                 self.send_status(
@@ -410,6 +415,7 @@ impl JobHandler {
         let requester = job.requester();
         let publisher = self.publisher.clone();
         let message = message.to_string();
+        let job_relays = job.relays.clone();
         let encryption_keys = if job.was_encrypted {
             Some(self.config.nostr_keys.clone())
         } else {
@@ -446,7 +452,7 @@ impl JobHandler {
                     remaining_secs,
                     encryption_keys.as_ref(),
                 );
-                if let Err(e) = publisher.publish(event).await {
+                if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
                 }
             }
@@ -474,6 +480,7 @@ impl JobHandler {
         let requester = job.requester();
         let publisher = self.publisher.clone();
         let message = message.to_string();
+        let job_relays = job.relays.clone();
         let encryption_keys = if job.was_encrypted {
             Some(self.config.nostr_keys.clone())
         } else {
@@ -541,7 +548,7 @@ impl JobHandler {
                     },
                     encryption_keys.as_ref(),
                 );
-                if let Err(e) = publisher.publish(event).await {
+                if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
                 }
             }
@@ -572,6 +579,7 @@ impl JobHandler {
         let requester = job.requester();
         let publisher = self.publisher.clone();
         let message = message.to_string();
+        let job_relays = job.relays.clone();
         let encryption_keys = if job.was_encrypted {
             Some(self.config.nostr_keys.clone())
         } else {
@@ -613,7 +621,7 @@ impl JobHandler {
                     Some(remaining_secs),
                     encryption_keys.as_ref(),
                 );
-                if let Err(e) = publisher.publish(event).await {
+                if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
                 }
             }
@@ -656,7 +664,7 @@ impl JobHandler {
             None,
             keys,
         );
-        self.publisher.publish(event).await?;
+        self.publisher.publish_for_job(event, &job.relays).await?;
         Ok(())
     }
 
@@ -675,7 +683,7 @@ impl JobHandler {
             None,
             keys,
         );
-        self.publisher.publish(event).await?;
+        self.publisher.publish_for_job(event, &job.relays).await?;
         Err(DvmError::JobRejected(message.to_string()))
     }
 
