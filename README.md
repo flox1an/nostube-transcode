@@ -7,14 +7,14 @@ A Nostr [Data Vending Machine](https://www.data-vending-machines.org/) that tran
 **One-liner** (detects GPU, prompts for config, starts everything):
 
 ```bash
-git clone https://github.com/nickhntv/divico-dvm.git && cd divico-dvm && ./setup.sh
+git clone https://github.com/flox1an/nostube-transcode.git && cd nostube-transcode && ./setup.sh
 ```
 
 **Manual Docker setup:**
 
 ```bash
-git clone https://github.com/nickhntv/divico-dvm.git
-cd divico-dvm
+git clone https://github.com/flox1an/nostube-transcode.git
+cd nostube-transcode
 cp .env.example .env
 # Edit .env -- set OPERATOR_NPUB to your npub
 ```

@@ -4,7 +4,7 @@ set -euo pipefail
 # Video Transform DVM - Setup Script
 # Detects GPU, checks prerequisites, generates .env, and starts the container.
 
-REPO_URL="https://github.com/nickhntv/divico-dvm.git"
+REPO_URL="https://github.com/flox1an/nostube-transcode.git"
 COMPOSE_NVIDIA="docker-compose.nvidia.yml"
 COMPOSE_DEFAULT="docker-compose.yml"
 
@@ -178,7 +178,7 @@ clone_if_needed() {
 
   # If run via curl|bash, we need to clone first
   info "Cloning repository..."
-  INSTALL_DIR="divico-dvm"
+  INSTALL_DIR="nostube-transcode"
   if [ -d "$INSTALL_DIR" ]; then
     info "Directory $INSTALL_DIR already exists, using it."
   else
