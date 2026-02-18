@@ -370,12 +370,21 @@ impl HwAccel {
                 ("-preset", "p4"), // balanced preset
                 ("-tune", "hq"),
                 ("-rc", "vbr"),
+                ("-g", "60"),
+                ("-keyint_min", "60"),
             ],
             (Self::Vaapi, _) => vec![
                 // VAAPI doesn't have many options, but we set profile for compatibility
                 ("-profile:v", "main"),
+                // GOP size for HLS segment alignment (approx 2s at 30-60fps)
+                ("-g", "60"),
+                ("-keyint_min", "60"),
             ],
-            (Self::Qsv, _) => vec![("-preset", "medium")],
+            (Self::Qsv, _) => vec![
+                ("-preset", "medium"),
+                ("-g", "60"),
+                ("-keyint_min", "60"),
+            ],
             (Self::VideoToolbox, _) => vec![],
             (Self::Software, _) => vec![("-preset", "medium")],
         }
@@ -431,10 +440,10 @@ impl std::fmt::Display for HwAccel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Nvenc => write!(f, "NVIDIA NVENC"),
-            Self::Vaapi => write!(f, "VAAPI (hevc_vaapi)"),
+            Self::Vaapi => write!(f, "VAAPI"),
             Self::Qsv => write!(f, "Intel QSV"),
             Self::VideoToolbox => write!(f, "Apple VideoToolbox"),
-            Self::Software => write!(f, "Software (libx265)"),
+            Self::Software => write!(f, "Software"),
         }
     }
 }
@@ -497,5 +506,14 @@ mod tests {
         assert_eq!(HwAccel::Qsv.hwaccel_type(), Some("qsv"));
         assert_eq!(HwAccel::VideoToolbox.hwaccel_type(), None);
         assert_eq!(HwAccel::Software.hwaccel_type(), None);
+    }
+
+    #[test]
+    fn test_hwaccel_display() {
+        assert_eq!(HwAccel::Nvenc.to_string(), "NVIDIA NVENC");
+        assert_eq!(HwAccel::Vaapi.to_string(), "VAAPI");
+        assert_eq!(HwAccel::Qsv.to_string(), "Intel QSV");
+        assert_eq!(HwAccel::VideoToolbox.to_string(), "Apple VideoToolbox");
+        assert_eq!(HwAccel::Software.to_string(), "Software");
     }
 }
