@@ -1,5 +1,11 @@
-# Docker Compose for DVM Video Processing with Intel QSV
-# Tested on UGREEN NAS (N100, Pentium Gold 8505, i5-1235U)
+# Docker Compose for DVM Video Processing with Intel QSV/VAAPI
+#
+# Quick start:
+#   1. cp .env.example .env && edit .env (set OPERATOR_NPUB)
+#   2. docker compose up -d
+#   3. Open http://localhost:3000 to manage via the admin UI
+#
+# See docs/deployment.md for Intel GPU setup and group ID configuration.
 
 services:
   dvm-video:
@@ -24,13 +30,11 @@ services:
       # Persistent temp directory (optional, for debugging)
       - ./temp:/app/temp
 
+    env_file:
+      - .env
+
     environment:
       # Intel QSV - Use Intel Media Driver for AV1/HEVC hardware decode
       - LIBVA_DRIVER_NAME=iHD
-
-      # Optional
-      - BOOTSTRAP_RELAYS=${BOOTSTRAP_RELAYS:-wss://relay.damus.io,wss://nos.lol}
-      - DVM_ADMIN_APP_URL=${DVM_ADMIN_APP_URL:-}
       - HTTP_PORT=3000
       - TEMP_DIR=/app/temp
-      - RUST_LOG=${RUST_LOG:-info}
