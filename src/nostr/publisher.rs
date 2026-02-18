@@ -85,9 +85,10 @@ impl EventPublisher {
             .map_err(|e| DvmError::JobRejected(format!("Failed to sign event: {}", e)))?;
 
         let event_id = event.id;
+        let event_kind = event.kind;
 
         if relay_urls.is_empty() {
-            warn!(event_id = %event_id, "No relays configured, event not sent");
+            warn!(event_id = %event_id, kind = %event_kind, "No relays configured, event not sent");
             return Ok(event_id);
         }
 
@@ -111,6 +112,7 @@ impl EventPublisher {
                 Ok(output) => {
                     debug!(
                         event_id = %event_id,
+                        kind = %event_kind,
                         success = ?output.success.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
                         failed = ?output.failed.iter().map(|(u, _)| u.to_string()).collect::<Vec<_>>(),
                         success_count = output.success.len(),

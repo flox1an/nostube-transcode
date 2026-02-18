@@ -541,6 +541,15 @@ impl JobHandler {
                     encryption_keys.as_ref(),
                     progress_pct,
                 );
+
+                debug!(
+                    job_id = %job_id,
+                    progress = ?progress_pct,
+                    eta = ?remaining_secs,
+                    message = %progress_msg,
+                    "Sending periodic transcode progress update"
+                );
+
                 if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
                 }
@@ -638,6 +647,15 @@ impl JobHandler {
                     encryption_keys.as_ref(),
                     Some(percent),
                 );
+
+                debug!(
+                    job_id = %job_id,
+                    progress = %percent,
+                    eta = %remaining_secs,
+                    speed = %format!("{:.1} MB/s", speed_mbps),
+                    "Sending periodic single-file upload progress update"
+                );
+
                 if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
                 }
@@ -719,6 +737,15 @@ impl JobHandler {
                     encryption_keys.as_ref(),
                     Some(percent),
                 );
+
+                debug!(
+                    job_id = %job_id,
+                    progress = %percent,
+                    eta = %remaining_secs,
+                    speed = %format!("{:.1} MB/s", speed_mbps),
+                    "Sending periodic HLS upload progress update"
+                );
+
                 if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
                 }
@@ -754,6 +781,14 @@ impl JobHandler {
         } else {
             None
         };
+
+        debug!(
+            job_id = %job.event_id(),
+            status = ?status,
+            message = ?message,
+            "Sending status update"
+        );
+
         let event = build_status_event_with_eta_encrypted(
             job.event_id(),
             job.requester(),
