@@ -111,6 +111,8 @@ impl EventPublisher {
                 Ok(output) => {
                     debug!(
                         event_id = %event_id,
+                        success = ?output.success.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
+                        failed = ?output.failed.iter().map(|(u, _)| u.to_string()).collect::<Vec<_>>(),
                         success_count = output.success.len(),
                         failed_count = output.failed.len(),
                         "Event published"

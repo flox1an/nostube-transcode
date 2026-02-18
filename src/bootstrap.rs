@@ -45,7 +45,7 @@ mod tests {
 
         let relays = get_bootstrap_relays();
 
-        assert_eq!(relays.len(), 3);
+        assert_eq!(relays.len(), 4);
         assert!(relays[0].to_string().contains("damus.io"));
     }
 
