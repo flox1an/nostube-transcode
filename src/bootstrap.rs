@@ -6,7 +6,6 @@ use nostr_sdk::Url;
 
 /// Default bootstrap relays used when no configuration is available
 pub const DEFAULT_BOOTSTRAP_RELAYS: &[&str] = &[
-    "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.primal.net",
     "wss://relay.nostu.be",
@@ -45,8 +44,8 @@ mod tests {
 
         let relays = get_bootstrap_relays();
 
-        assert_eq!(relays.len(), 4);
-        assert!(relays[0].to_string().contains("damus.io"));
+        assert_eq!(relays.len(), 3);
+        assert!(relays[0].to_string().contains("nos.lol"));
     }
 
     #[test]
