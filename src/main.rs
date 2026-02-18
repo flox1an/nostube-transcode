@@ -79,8 +79,9 @@ async fn main() -> anyhow::Result<()> {
     let subscription_handle = tokio::spawn({
         let config = startup.config.clone();
         let client = startup.client.clone();
+        let state = startup.state.clone();
         async move {
-            match SubscriptionManager::new(config, client).await {
+            match SubscriptionManager::new(config, client, state).await {
                 Ok(manager) => {
                     if let Err(e) = manager.run(job_tx).await {
                         tracing::error!("Subscription manager error: {}", e);
@@ -103,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
     let processor = Arc::new(VideoProcessor::new(startup.config.clone()));
     let job_handler = JobHandler::new(
         startup.config.clone(),
+        startup.state.clone(),
         job_publisher,
         blossom,
         processor,

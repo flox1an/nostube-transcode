@@ -105,16 +105,14 @@ pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
         remote_config.admin.as_deref().unwrap_or("unknown")
     );
 
-    // Connect to configured relays (in addition to bootstrap)
-    if !remote_config.relays.is_empty() {
-        tracing::info!("Adding configured relays...");
-        for relay in &remote_config.relays {
-            if let Err(e) = client.add_relay(relay.clone()).await {
-                tracing::warn!("Failed to add relay {}: {}", relay, e);
-            }
+    // Ensure all configured relays are connected
+    tracing::info!("Connecting to configured relays...");
+    for relay in &remote_config.relays {
+        if let Err(e) = client.add_relay(relay.clone()).await {
+            tracing::warn!("Failed to add relay {}: {}", relay, e);
         }
-        client.connect().await;
     }
+    client.connect().await;
 
     // Step 6: Discover FFmpeg binaries
     tracing::info!("Discovering FFmpeg binaries...");

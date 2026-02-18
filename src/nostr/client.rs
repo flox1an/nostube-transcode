@@ -5,18 +5,20 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
-use crate::dvm::events::{JobContext, DVM_VIDEO_TRANSFORM_REQUEST_KIND};
+use crate::dvm_state::SharedDvmState;
+use crate::dvm::events::{JobContext, DVM_VIDEO_TRANSFORM_REQUEST_KIND, DVM_STATUS_KIND};
 use crate::error::DvmError;
 
 pub struct SubscriptionManager {
     #[allow(dead_code)]
     config: Arc<Config>,
     client: Client,
+    state: SharedDvmState,
 }
 
 impl SubscriptionManager {
-    pub async fn new(config: Arc<Config>, client: Client) -> Result<Self, DvmError> {
-        Ok(Self { config, client })
+    pub async fn new(config: Arc<Config>, client: Client, state: SharedDvmState) -> Result<Self, DvmError> {
+        Ok(Self { config, client, state })
     }
 
     /// Get the DVM keys for encryption/decryption
@@ -55,17 +57,36 @@ impl SubscriptionManager {
             warn!("Starting subscription without any connected relays. This may fail.");
         }
 
-        // Subscribe to DVM requests addressed to this DVM
+        // Background cleanup task for expired bids
+        let state_for_cleanup = self.state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                state_for_cleanup.write().await.cleanup_bids();
+            }
+        });
+
+        // Subscribe to DVM requests, selection feedback, and gift wraps (Cashu)
         let dvm_pubkey = self.config.nostr_keys.public_key();
         let filter = Filter::new()
-            .kind(DVM_VIDEO_TRANSFORM_REQUEST_KIND)
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::P), [dvm_pubkey.to_hex()])
+            .kinds(vec![
+                DVM_VIDEO_TRANSFORM_REQUEST_KIND,
+                DVM_STATUS_KIND,
+                Kind::GiftWrap,
+            ])
+            .since(Timestamp::now());
+            
+        // For status and gift wrap, we only care about those addressed to us
+        let directed_filter = Filter::new()
+            .kinds(vec![DVM_STATUS_KIND, Kind::GiftWrap])
+            .pubkey(dvm_pubkey)
             .since(Timestamp::now());
 
         // Try to subscribe with retries
         let mut last_error = None;
         for i in 0..5 {
-            match self.client.subscribe(vec![filter.clone()], None).await {
+            match self.client.subscribe(vec![filter.clone(), directed_filter.clone()], None).await {
                 Ok(_) => {
                     info!("Subscribed to DVM video transform requests");
                     last_error = None;
@@ -94,6 +115,7 @@ impl SubscriptionManager {
                 let job_tx = job_tx.clone();
                 let seen = seen.clone();
                 let keys = keys.clone();
+                let state = self.state.clone();
 
                 async move {
                     if let RelayPoolNotification::Event { event, .. } = notification {
@@ -101,28 +123,94 @@ impl SubscriptionManager {
                             let mut seen_guard = seen.lock().await;
                             if !seen_guard.contains(&event.id) {
                                 seen_guard.insert(event.id);
-                                drop(seen_guard); // Release lock before async operations
+                                drop(seen_guard);
 
                                 debug!(event_id = %event.id, "Received DVM request");
 
-                                // Use from_event_with_keys to handle encrypted requests
                                 match JobContext::from_event_with_keys((*event).clone(), &keys) {
                                     Ok(context) => {
-                                        if context.was_encrypted {
-                                            debug!(event_id = %context.event_id(), "Decrypted encrypted request");
-                                        }
                                         if let Err(e) = job_tx.send(context).await {
                                             error!("Failed to queue job: {}", e);
                                         }
                                     }
-                                    Err(e) => {
-                                        warn!("Rejected job: {}", e);
+                                    Err(e) => warn!("Rejected job: {}", e),
+                                }
+                            }
+                        } else if event.kind == DVM_STATUS_KIND {
+                            // Check if this is a "selection" feedback from a user
+                            let is_approved = event.tags.iter().any(|t| {
+                                let parts = t.as_slice();
+                                parts.len() >= 2 && parts[0] == "status" && parts[1] == "approved"
+                            });
+
+                            if is_approved {
+                                let job_id = event.tags.iter().find_map(|t| {
+                                    let parts = t.as_slice();
+                                    if parts.len() >= 2 && parts[0] == "e" {
+                                        EventId::parse(&parts[1]).ok()
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                                if let Some(id) = job_id {
+                                    let mut state_guard = state.write().await;
+                                    if let Some(bid) = state_guard.take_bid(&id) {
+                                        info!(job_id = %id, "Received 'approved' feedback, starting pending job");
+                                        if let Err(e) = job_tx.send(bid.context).await {
+                                            error!("Failed to queue approved job: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                        } else if event.kind == Kind::GiftWrap {
+                            // Handle NIP-17 GiftWrap (potentially for Cashu tokens or private feedback)
+                            if let Ok(UnwrappedGift { rumor, .. }) = self.client.unwrap_gift_wrap(&event).await {
+                                if rumor.kind == DVM_STATUS_KIND {
+                                    // Check if this is an "approved" feedback in a Rumor
+                                    let is_approved = rumor.tags.iter().any(|t| {
+                                        let parts = t.as_slice();
+                                        parts.len() >= 2 && parts[0] == "status" && parts[1] == "approved"
+                                    });
+
+                                    if is_approved {
+                                        let job_id = rumor.tags.iter().find_map(|t| {
+                                            let parts = t.as_slice();
+                                            if parts.len() >= 2 && parts[0] == "e" {
+                                                EventId::parse(&parts[1]).ok()
+                                            } else {
+                                                None
+                                            }
+                                        });
+
+                                        if let Some(id) = job_id {
+                                            let mut state_guard = state.write().await;
+                                            if let Some(bid) = state_guard.take_bid(&id) {
+                                                info!(job_id = %id, "Received private 'approved' feedback via NIP-17, starting job");
+                                                if let Err(e) = job_tx.send(bid.context).await {
+                                                    error!("Failed to queue approved job: {}", e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if rumor.kind == DVM_VIDEO_TRANSFORM_REQUEST_KIND {
+                                    // Directed request within a GiftWrap (Selection + Payment)
+                                    match JobContext::from_rumor_with_keys(rumor, &keys) {
+                                        Ok(context) => {
+                                            if context.cashu_token.is_some() {
+                                                debug!(job_id = %context.event_id(), "Received directed request with Cashu token via NIP-17");
+                                            }
+                                            if let Err(e) = job_tx.send(context).await {
+                                                error!("Failed to queue job from GiftWrap: {}", e);
+                                            }
+                                        }
+                                        Err(e) => warn!("Rejected job from GiftWrap: {}", e),
                                     }
                                 }
                             }
                         }
                     }
-                    Ok(false) // Continue handling
+                    Ok(false)
                 }
             })
             .await?;

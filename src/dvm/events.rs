@@ -187,6 +187,13 @@ pub struct JobContext {
     pub hls_resolutions: Vec<HlsResolution>,
     /// Enable AES-128 encryption for HLS (defaults to true for backward compatibility)
     pub encryption: bool,
+    /// Cashu token for payment (optional)
+    pub cashu_token: Option<String>,
+    /// Original requester pubkey (set when request came via NIP-17 gift wrap,
+    /// since `request` is re-signed with DVM keys for internal use)
+    original_requester: Option<PublicKey>,
+    /// Original event ID from the rumor (before re-signing)
+    original_event_id: Option<EventId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +290,39 @@ impl JobContext {
         }
     }
 
+    /// Create JobContext from an UnsignedEvent (NIP-17 Rumor)
+    pub fn from_rumor_with_keys(rumor: UnsignedEvent, keys: &Keys) -> Result<Self, DvmError> {
+        let tags: Vec<Tag> = rumor.tags.iter().cloned().collect();
+        let input = Self::extract_input_from_tags(&tags)?;
+        let relays = Self::extract_relays_from_tags(&tags);
+        let (mode, resolution, codec, hls_resolutions, encryption) =
+            Self::extract_params_from_tags(&tags);
+        let cashu_token = Self::extract_cashu_token_from_tags(&tags);
+
+        // Preserve the real requester identity before re-signing
+        let original_requester = Some(rumor.pubkey);
+        let original_event_id = rumor.id;
+
+        // Re-sign with DVM keys so we have a valid Event for internal processing.
+        // The original identity is preserved in the fields above.
+        let event = rumor.sign(keys).map_err(|e| DvmError::JobRejected(format!("Failed to sign rumor: {}", e)))?;
+
+        Ok(Self {
+            request: event,
+            was_encrypted: true,
+            input,
+            relays,
+            mode,
+            resolution,
+            codec,
+            hls_resolutions,
+            encryption,
+            cashu_token,
+            original_requester,
+            original_event_id,
+        })
+    }
+
     /// Create JobContext from an unencrypted event
     pub fn from_event(event: Event) -> Result<Self, DvmError> {
         let tags: Vec<Tag> = event.tags.iter().cloned().collect();
@@ -290,6 +330,7 @@ impl JobContext {
         let relays = Self::extract_relays_from_tags(&tags);
         let (mode, resolution, codec, hls_resolutions, encryption) =
             Self::extract_params_from_tags(&tags);
+        let cashu_token = Self::extract_cashu_token_from_tags(&tags);
 
         Ok(Self {
             request: event,
@@ -301,6 +342,9 @@ impl JobContext {
             codec,
             hls_resolutions,
             encryption,
+            cashu_token,
+            original_requester: None,
+            original_event_id: None,
         })
     }
 
@@ -329,8 +373,8 @@ impl JobContext {
         // Also include unencrypted tags (relays, p tag, etc.)
         for tag in event.tags.iter() {
             let tag_name = tag.as_slice().first().map(|s| s.as_str());
-            // Include relays tag from unencrypted tags
-            if tag_name == Some("relays") {
+            // Include relays and cashu tags from unencrypted tags
+            if tag_name == Some("relays") || tag_name == Some("cashu") {
                 virtual_tags.push(tag.clone());
             }
         }
@@ -338,6 +382,7 @@ impl JobContext {
         let relays = Self::extract_relays_from_tags(&virtual_tags);
         let (mode, resolution, codec, hls_resolutions, encryption) =
             Self::extract_params_from_tags(&virtual_tags);
+        let cashu_token = Self::extract_cashu_token_from_tags(&virtual_tags);
 
         Ok(Self {
             request: event,
@@ -349,7 +394,16 @@ impl JobContext {
             codec,
             hls_resolutions,
             encryption,
+            cashu_token,
+            original_requester: None,
+            original_event_id: None,
         })
+    }
+
+    fn extract_cashu_token_from_tags(tags: &[Tag]) -> Option<String> {
+        tags.iter()
+            .find(|t| t.as_slice().first().map(|s| s.as_str()) == Some("cashu"))
+            .and_then(|t| t.as_slice().get(1).map(|s| s.to_string()))
     }
 
     fn extract_params_from_tags(
@@ -433,12 +487,12 @@ impl JobContext {
 
     /// Get the event ID of the original request
     pub fn event_id(&self) -> EventId {
-        self.request.id
+        self.original_event_id.unwrap_or(self.request.id)
     }
 
     /// Get the public key of the requester
     pub fn requester(&self) -> PublicKey {
-        self.request.pubkey
+        self.original_requester.unwrap_or(self.request.pubkey)
     }
 }
 
@@ -463,6 +517,13 @@ pub fn build_status_event_with_eta(
     build_status_event_with_eta_encrypted(job_id, requester, status, message, remaining_secs, None)
 }
 
+/// Context for Cashu payment request
+#[derive(Debug, Clone)]
+pub struct CashuContext {
+    pub mint: String,
+    pub amount_sats: u64,
+}
+
 /// Build a status event with optional encryption (NIP-04)
 pub fn build_status_event_with_eta_encrypted(
     job_id: EventId,
@@ -471,6 +532,27 @@ pub fn build_status_event_with_eta_encrypted(
     message: Option<&str>,
     remaining_secs: Option<u64>,
     keys: Option<&Keys>,
+) -> EventBuilder {
+    build_status_event_with_context(
+        job_id,
+        requester,
+        status,
+        message,
+        remaining_secs,
+        keys,
+        None,
+    )
+}
+
+/// Build a status event with optional context (e.g. Cashu)
+pub fn build_status_event_with_context(
+    job_id: EventId,
+    requester: PublicKey,
+    status: JobStatus,
+    message: Option<&str>,
+    remaining_secs: Option<u64>,
+    keys: Option<&Keys>,
+    cashu: Option<CashuContext>,
 ) -> EventBuilder {
     // NIP-40 expiration: 24 hours
     let expiration = Timestamp::now() + Duration::from_secs(STATUS_EXPIRATION_SECS);
@@ -485,14 +567,32 @@ pub fn build_status_event_with_eta_encrypted(
         ),
     ];
 
+    if let Some(ctx) = &cashu {
+        tags.push(Tag::custom(
+            TagKind::Custom("cashu".into()),
+            vec![ctx.mint.clone()],
+        ));
+        tags.push(Tag::custom(
+            TagKind::Custom("amount".into()),
+            vec![ctx.amount_sats.to_string()],
+        ));
+    }
+
     // For encrypted responses, put status details in encrypted content
     if let Some(keys) = keys {
         // Build status content JSON
-        let status_content = serde_json::json!({
+        let mut status_content = serde_json::json!({
             "status": status.as_str(),
             "message": message,
             "eta": remaining_secs,
         });
+
+        if let Some(ctx) = cashu {
+            if let Some(obj) = status_content.as_object_mut() {
+                obj.insert("cashu".to_string(), serde_json::json!(ctx.mint));
+                obj.insert("amount".to_string(), serde_json::json!(ctx.amount_sats));
+            }
+        }
 
         // Encrypt the content
         if let Ok(encrypted) =

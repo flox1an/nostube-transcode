@@ -9,13 +9,17 @@ use tracing::{debug, error, info, warn};
 
 use crate::blossom::BlossomClient;
 use crate::config::Config;
+use crate::dvm_state::SharedDvmState;
 use crate::dvm::events::{
-    build_result_event_encrypted, build_status_event_with_eta_encrypted, Codec, DvmResult,
-    HlsResolution, JobContext, JobStatus, Mp4Result, OutputMode,
+    build_result_event_encrypted, build_status_event_with_eta_encrypted, build_status_event_with_context,
+    Codec, DvmResult, HlsResolution, JobContext, JobStatus, Mp4Result, OutputMode, CashuContext,
 };
 use crate::error::DvmError;
 use crate::nostr::EventPublisher;
 use crate::video::{TransformResult, VideoMetadata, VideoProcessor};
+use cdk::nuts::Token;
+use cdk::amount::Amount;
+use std::str::FromStr;
 
 /// Tracks upload progress and dynamically estimates remaining time
 #[derive(Debug)]
@@ -74,6 +78,7 @@ impl UploadTracker {
 pub struct JobHandler {
     #[allow(dead_code)]
     config: Arc<Config>,
+    state: SharedDvmState,
     publisher: Arc<EventPublisher>,
     blossom: Arc<BlossomClient>,
     processor: Arc<VideoProcessor>,
@@ -83,12 +88,14 @@ pub struct JobHandler {
 impl JobHandler {
     pub fn new(
         config: Arc<Config>,
+        state: SharedDvmState,
         publisher: Arc<EventPublisher>,
         blossom: Arc<BlossomClient>,
         processor: Arc<VideoProcessor>,
     ) -> Self {
         Self {
             config,
+            state,
             publisher,
             blossom,
             processor,
@@ -115,6 +122,84 @@ impl JobHandler {
     async fn handle_job(&self, job: JobContext) -> Result<(), DvmError> {
         let job_id = job.event_id();
         let requester = job.requester();
+        let my_pubkey = self.config.nostr_keys.public_key();
+
+        // Check if DVM is paused
+        let is_paused = self.state.read().await.is_paused();
+        if is_paused {
+            return Ok(()); // Silently ignore requests when paused in Bid/Select mode
+        }
+
+        // Determine if this request is specifically for us
+        let is_for_us = job.request.tags.iter().any(|t| {
+            let parts = t.as_slice();
+            parts.len() >= 2 && parts[0] == "p" && parts[1] == my_pubkey.to_hex()
+        });
+
+        // Determine if it's addressed to someone else
+        let is_for_others = job.request.tags.iter().any(|t| {
+            let parts = t.as_slice();
+            parts.len() >= 2 && parts[0] == "p" && parts[1] != my_pubkey.to_hex()
+        });
+
+        if !is_for_us {
+            if is_for_others {
+                // Addressed to someone else, ignore
+                return Ok(());
+            }
+
+            // Public request with no p-tag: Send a Bid and save to state
+            debug!(job_id = %job_id, "Sending bid for public request");
+            
+            // Define DVM cost and mint
+            let dvm_cost_sats = 0; // Free for now
+            let mint_url = "https://mint.bitonic.nl";
+
+            self.send_cashu_bid(
+                &job,
+                mint_url,
+                dvm_cost_sats,
+                Some("I can process this video for you"),
+            )
+            .await?;
+
+            // Save to pending bids in state
+            self.state.write().await.add_bid(job);
+            return Ok(());
+        }
+
+        // If we got here, it's addressed to us (Selection).
+        
+        // Remove from pending bids if it was there (we are starting it now)
+        self.state.write().await.take_bid(&job_id);
+        
+        // Define DVM cost
+        let dvm_cost_sats = 0; 
+        let mint_url = "https://mint.bitonic.nl";
+
+        if dvm_cost_sats > 0 {
+            match job.cashu_token {
+                Some(ref token_str) => {
+                    info!(job_id = %job_id, "Verifying Cashu token...");
+                    if let Err(e) = self.verify_cashu_token(token_str, dvm_cost_sats, mint_url).await {
+                        warn!(job_id = %job_id, error = %e, "Cashu token verification failed");
+                        return self.send_error(&job, &format!("Payment verification failed: {}", e)).await;
+                    }
+                    info!(job_id = %job_id, "Cashu token verified successfully");
+                }
+                None => {
+                    warn!(job_id = %job_id, "Payment required but no Cashu token provided");
+                    return self.send_cashu_bid(
+                        &job,
+                        mint_url,
+                        dvm_cost_sats,
+                        Some("Payment required to start this job"),
+                    ).await;
+                }
+            }
+        }
+
+        info!(job_id = %job_id, "Starting execution for directed request");
 
         // Ensure job relays are in the client pool
         if !job.relays.is_empty() {
@@ -125,7 +210,7 @@ impl JobHandler {
         self.send_status(
             &job,
             JobStatus::Processing,
-            Some("Job received, validating input..."),
+            Some("Job accepted, validating input..."),
         )
         .await?;
 
@@ -668,6 +753,38 @@ impl JobHandler {
         Ok(())
     }
 
+    async fn send_cashu_bid(
+        &self,
+        job: &JobContext,
+        mint: &str,
+        amount_sats: u64,
+        message: Option<&str>,
+    ) -> Result<(), DvmError> {
+        let keys = if job.was_encrypted {
+            Some(&self.config.nostr_keys)
+        } else {
+            None
+        };
+        
+        let context = CashuContext {
+            mint: mint.to_string(),
+            amount_sats,
+        };
+
+        let event = build_status_event_with_context(
+            job.event_id(),
+            job.requester(),
+            JobStatus::PaymentRequired,
+            message,
+            None,
+            keys,
+            Some(context),
+        );
+        
+        self.publisher.publish_for_job(event, &job.relays).await?;
+        Ok(())
+    }
+
     async fn send_error(&self, job: &JobContext, message: &str) -> Result<(), DvmError> {
         // Use encryption if the request was encrypted
         let keys = if job.was_encrypted {
@@ -685,6 +802,43 @@ impl JobHandler {
         );
         self.publisher.publish_for_job(event, &job.relays).await?;
         Err(DvmError::JobRejected(message.to_string()))
+    }
+
+    /// Verifies a Cashu token with a mint.
+    async fn verify_cashu_token(&self, token_str: &str, required_sats: u64, expected_mint: &str) -> Result<(), String> {
+        let token = Token::from_str(token_str).map_err(|e| format!("Invalid Cashu token: {}", e))?;
+        
+        let mut total_amount = Amount::ZERO;
+
+        match token {
+            Token::TokenV3(v3) => {
+                for token_proofs in &v3.token {
+                    if token_proofs.mint.to_string() != expected_mint {
+                        return Err(format!("Unexpected mint in V3: {} (expected {})", token_proofs.mint, expected_mint));
+                    }
+                    for proof in &token_proofs.proofs {
+                        total_amount += proof.amount;
+                    }
+                }
+            }
+            Token::TokenV4(v4) => {
+                if v4.mint_url.to_string() != expected_mint {
+                    return Err(format!("Unexpected mint in V4: {} (expected {})", v4.mint_url, expected_mint));
+                }
+                for token_v4 in &v4.token {
+                    for proof in &token_v4.proofs {
+                        total_amount += proof.amount;
+                    }
+                }
+            }
+        }
+
+        if total_amount < Amount::from(required_sats) {
+            return Err(format!("Insufficient amount: {} (required {})", total_amount, required_sats));
+        }
+
+        // TODO: Contact the mint to verify the proofs are still valid (not spent)
+        Ok(())
     }
 
     /// Get encryption keys if the job was encrypted

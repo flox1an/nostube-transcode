@@ -4,8 +4,9 @@
 //! job statistics, and history.
 
 use crate::remote_config::RemoteConfig;
+use crate::dvm::events::JobContext;
 use nostr_sdk::prelude::*;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,8 +15,18 @@ use tokio::sync::RwLock;
 /// Maximum number of job records to keep in history
 pub const MAX_JOB_HISTORY: usize = 100;
 
+/// How long to keep a pending bid before timing out (5 minutes)
+pub const PENDING_BID_TIMEOUT_SECS: u64 = 300;
+
 /// Thread-safe shared DVM state
 pub type SharedDvmState = Arc<RwLock<DvmState>>;
+
+/// A bid sent by the DVM waiting for selection or payment
+#[derive(Debug, Clone)]
+pub struct PendingBid {
+    pub context: JobContext,
+    pub created_at: Instant,
+}
 
 /// DVM runtime state
 #[derive(Debug)]
@@ -34,6 +45,8 @@ pub struct DvmState {
     pub jobs_failed: u32,
     /// Recent job history (newest first)
     pub job_history: VecDeque<JobRecord>,
+    /// Bids sent to users waiting for selection/payment
+    pub pending_bids: HashMap<EventId, PendingBid>,
     /// Hardware acceleration method if available
     pub hwaccel: Option<String>,
 }
@@ -87,8 +100,31 @@ impl DvmState {
             jobs_completed: 0,
             jobs_failed: 0,
             job_history: VecDeque::new(),
+            pending_bids: HashMap::new(),
             hwaccel: None,
         }
+    }
+
+    /// Add a pending bid
+    pub fn add_bid(&mut self, context: JobContext) {
+        let id = context.event_id();
+        self.pending_bids.insert(id, PendingBid {
+            context,
+            created_at: Instant::now(),
+        });
+    }
+
+    /// Remove and return a pending bid if it exists
+    pub fn take_bid(&mut self, id: &EventId) -> Option<PendingBid> {
+        self.pending_bids.remove(id)
+    }
+
+    /// Clean up expired bids
+    pub fn cleanup_bids(&mut self) {
+        let now = Instant::now();
+        self.pending_bids.retain(|_, bid| {
+            now.duration_since(bid.created_at).as_secs() < PENDING_BID_TIMEOUT_SECS
+        });
     }
 
     /// Create a new shared DVM state
