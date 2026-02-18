@@ -508,7 +508,7 @@ pub fn build_status_event(
     status: JobStatus,
     message: Option<&str>,
 ) -> EventBuilder {
-    build_status_event_with_eta_encrypted(job_id, requester, status, message, None, None)
+    build_status_event_with_eta_encrypted(job_id, requester, status, message, None, None, None)
 }
 
 /// Build a status event with optional estimated time remaining
@@ -519,7 +519,7 @@ pub fn build_status_event_with_eta(
     message: Option<&str>,
     remaining_secs: Option<u64>,
 ) -> EventBuilder {
-    build_status_event_with_eta_encrypted(job_id, requester, status, message, remaining_secs, None)
+    build_status_event_with_eta_encrypted(job_id, requester, status, message, remaining_secs, None, None)
 }
 
 /// Context for Cashu payment request
@@ -537,6 +537,7 @@ pub fn build_status_event_with_eta_encrypted(
     message: Option<&str>,
     remaining_secs: Option<u64>,
     keys: Option<&Keys>,
+    progress: Option<u32>,
 ) -> EventBuilder {
     build_status_event_with_context(
         job_id,
@@ -546,6 +547,7 @@ pub fn build_status_event_with_eta_encrypted(
         remaining_secs,
         keys,
         None,
+        progress,
     )
 }
 
@@ -558,6 +560,7 @@ pub fn build_status_event_with_context(
     remaining_secs: Option<u64>,
     keys: Option<&Keys>,
     cashu: Option<CashuContext>,
+    progress: Option<u32>,
 ) -> EventBuilder {
     // NIP-40 expiration: 24 hours
     let expiration = Timestamp::now() + Duration::from_secs(STATUS_EXPIRATION_SECS);
@@ -590,6 +593,7 @@ pub fn build_status_event_with_context(
             "status": status.as_str(),
             "message": message,
             "eta": remaining_secs,
+            "progress": progress,
         });
 
         if let Some(ctx) = cashu {
@@ -627,6 +631,13 @@ pub fn build_status_event_with_context(
         tags.push(Tag::custom(
             TagKind::Custom("eta".into()),
             vec![secs.to_string()],
+        ));
+    }
+
+    if let Some(pct) = progress {
+        tags.push(Tag::custom(
+            TagKind::Custom("progress".into()),
+            vec![pct.to_string()],
         ));
     }
 

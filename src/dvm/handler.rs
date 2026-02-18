@@ -509,22 +509,25 @@ impl JobHandler {
 
         // Spawn a background task for periodic updates
         let progress_handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(10));
+            let mut ticker = interval(Duration::from_secs(5));
             ticker.tick().await; // First tick is immediate, skip it
 
             loop {
                 ticker.tick().await;
                 let elapsed = start.elapsed().as_secs();
 
-                let (progress_msg, remaining_secs) = if estimated_secs > 0 {
+                let (progress_msg, remaining_secs, progress_pct) = if estimated_secs > 0 {
                     let remaining = estimated_secs.saturating_sub(elapsed);
+                    let pct = ((elapsed as f64 / estimated_secs as f64) * 100.0).min(99.0) as u32;
                     (
                         format!("{} (~{} remaining)", message, format_duration(remaining)),
                         Some(remaining),
+                        Some(pct),
                     )
                 } else {
                     (
                         format!("{} ({} elapsed)", message, format_duration(elapsed)),
+                        None,
                         None,
                     )
                 };
@@ -536,6 +539,7 @@ impl JobHandler {
                     Some(&progress_msg),
                     remaining_secs,
                     encryption_keys.as_ref(),
+                    progress_pct,
                 );
                 if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
@@ -579,7 +583,7 @@ impl JobHandler {
 
         // Spawn a background task for periodic updates using real-time counter
         let progress_handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(3));
+            let mut ticker = interval(Duration::from_secs(5));
             ticker.tick().await; // First tick is immediate, skip it
 
             loop {
@@ -632,6 +636,7 @@ impl JobHandler {
                         None
                     },
                     encryption_keys.as_ref(),
+                    Some(percent),
                 );
                 if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
@@ -677,23 +682,30 @@ impl JobHandler {
 
         // Spawn a background task for periodic updates using tracker
         let progress_handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(10));
+            let mut ticker = interval(Duration::from_secs(5));
             ticker.tick().await; // First tick is immediate, skip it
 
             loop {
                 ticker.tick().await;
 
-                let (remaining_secs, speed_mbps) = {
+                let (remaining_secs, speed_mbps, percent) = {
                     let t = tracker_for_task.lock().unwrap();
+                    let pct = if t.total_bytes > 0 {
+                        ((t.bytes_uploaded as f64 / t.total_bytes as f64) * 100.0) as u32
+                    } else {
+                        0
+                    };
                     (
                         t.estimated_remaining_secs(),
                         t.average_speed() / (1024.0 * 1024.0),
+                        pct,
                     )
                 };
 
                 let progress_msg = format!(
-                    "{} (~{} remaining, {:.1} MB/s)",
+                    "{} ({}%, ~{} remaining, {:.1} MB/s)",
                     message,
+                    percent,
                     format_duration(remaining_secs),
                     speed_mbps
                 );
@@ -705,6 +717,7 @@ impl JobHandler {
                     Some(&progress_msg),
                     Some(remaining_secs),
                     encryption_keys.as_ref(),
+                    Some(percent),
                 );
                 if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
                     debug!(error = %e, "Failed to send progress update");
@@ -748,6 +761,7 @@ impl JobHandler {
             message,
             None,
             keys,
+            None,
         );
         self.publisher.publish_for_job(event, &job.relays).await?;
         Ok(())
@@ -765,7 +779,7 @@ impl JobHandler {
         } else {
             None
         };
-        
+
         let context = CashuContext {
             mint: mint.to_string(),
             amount_sats,
@@ -779,8 +793,9 @@ impl JobHandler {
             None,
             keys,
             Some(context),
+            None,
         );
-        
+
         self.publisher.publish_for_job(event, &job.relays).await?;
         Ok(())
     }
@@ -799,6 +814,7 @@ impl JobHandler {
             Some(message),
             None,
             keys,
+            None,
         );
         self.publisher.publish_for_job(event, &job.relays).await?;
         Err(DvmError::JobRejected(message.to_string()))
