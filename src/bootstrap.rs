@@ -9,6 +9,7 @@ pub const DEFAULT_BOOTSTRAP_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.primal.net",
+    "wss://relay.nostu.be",
 ];
 
 /// Returns bootstrap relays from environment or defaults.

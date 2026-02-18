@@ -32,7 +32,7 @@ pub enum RemoteConfigError {
 pub const CONFIG_VERSION: u32 = 1;
 
 /// Remote configuration stored on Nostr
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteConfig {
     /// Schema version
     pub version: u32,
@@ -43,16 +43,16 @@ pub struct RemoteConfig {
     #[serde(default)]
     pub relays: Vec<String>,
     /// Blossom upload servers
-    #[serde(default)]
+    #[serde(default = "default_blossom_servers")]
     pub blossom_servers: Vec<String>,
     /// Blob expiration in days
     #[serde(default = "default_expiration")]
     pub blob_expiration_days: u32,
     /// DVM display name
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_name", skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// DVM description
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_about", skip_serializing_if = "Option::is_none")]
     pub about: Option<String>,
     /// Whether DVM is paused (rejecting new jobs)
     #[serde(default)]
@@ -63,14 +63,37 @@ fn default_expiration() -> u32 {
     30
 }
 
+fn default_blossom_servers() -> Vec<String> {
+    vec!["https://transformed.nostu.be/".to_string()]
+}
+
+fn default_name() -> Option<String> {
+    Some("Video Transcoder DVM".to_string())
+}
+
+fn default_about() -> Option<String> {
+    Some("Transforms videos to HLS and MP4 via Blossom".to_string())
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            admin: None,
+            relays: Vec::new(),
+            blossom_servers: default_blossom_servers(),
+            blob_expiration_days: default_expiration(),
+            name: default_name(),
+            about: default_about(),
+            paused: false,
+        }
+    }
+}
+
 impl RemoteConfig {
     /// Create a new empty config with defaults
     pub fn new() -> Self {
-        Self {
-            version: CONFIG_VERSION,
-            blob_expiration_days: 30,
-            ..Default::default()
-        }
+        Self::default()
     }
 
     /// Check if this config has an admin configured
@@ -189,6 +212,10 @@ mod tests {
 
         assert_eq!(config.blob_expiration_days, 30);
         assert!(config.relays.is_empty());
+        assert_eq!(config.blossom_servers.len(), 1);
+        assert_eq!(config.blossom_servers[0], "https://transformed.nostu.be/");
+        assert_eq!(config.name, Some("Video Transcoder DVM".to_string()));
+        assert_eq!(config.about, Some("Transforms videos to HLS and MP4 via Blossom".to_string()));
         assert!(!config.paused);
     }
 
