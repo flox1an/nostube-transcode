@@ -40,7 +40,7 @@ pub struct RemoteConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub admin: Option<String>,
     /// Nostr relays for DVM operation
-    #[serde(default)]
+    #[serde(default = "default_relays")]
     pub relays: Vec<String>,
     /// Blossom upload servers
     #[serde(default = "default_blossom_servers")]
@@ -63,6 +63,10 @@ fn default_expiration() -> u32 {
     30
 }
 
+fn default_relays() -> Vec<String> {
+    vec!["wss://relay.nostu.be".to_string()]
+}
+
 fn default_blossom_servers() -> Vec<String> {
     vec!["https://transformed.nostu.be/".to_string()]
 }
@@ -80,7 +84,7 @@ impl Default for RemoteConfig {
         Self {
             version: CONFIG_VERSION,
             admin: None,
-            relays: Vec::new(),
+            relays: default_relays(),
             blossom_servers: default_blossom_servers(),
             blob_expiration_days: default_expiration(),
             name: default_name(),
@@ -211,7 +215,8 @@ mod tests {
         let config: RemoteConfig = serde_json::from_str(json).unwrap();
 
         assert_eq!(config.blob_expiration_days, 30);
-        assert!(config.relays.is_empty());
+        assert_eq!(config.relays.len(), 1);
+        assert_eq!(config.relays[0], "wss://relay.nostu.be");
         assert_eq!(config.blossom_servers.len(), 1);
         assert_eq!(config.blossom_servers[0], "https://transformed.nostu.be/");
         assert_eq!(config.name, Some("Video Transcoder DVM".to_string()));
