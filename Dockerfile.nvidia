@@ -74,8 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnvidia-decode-550 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -u 1000 dvm
+# Create non-root user (no fixed UID — nvidia/cuda base may already have UID 1000)
+RUN useradd -m dvm || true
 
 WORKDIR /app
 
