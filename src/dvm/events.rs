@@ -194,6 +194,8 @@ pub struct JobContext {
     original_requester: Option<PublicKey>,
     /// Original event ID from the rumor (before re-signing)
     original_event_id: Option<EventId>,
+    /// Whether this job was approved via bid selection (skip bidding)
+    pub approved: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,6 +322,7 @@ impl JobContext {
             cashu_token,
             original_requester,
             original_event_id,
+            approved: false,
         })
     }
 
@@ -345,6 +348,7 @@ impl JobContext {
             cashu_token,
             original_requester: None,
             original_event_id: None,
+            approved: false,
         })
     }
 
@@ -397,6 +401,7 @@ impl JobContext {
             cashu_token,
             original_requester: None,
             original_event_id: None,
+            approved: false,
         })
     }
 

@@ -131,7 +131,7 @@ impl JobHandler {
         }
 
         // Determine if this request is specifically for us
-        let is_for_us = job.request.tags.iter().any(|t| {
+        let is_for_us = job.approved || job.request.tags.iter().any(|t| {
             let parts = t.as_slice();
             parts.len() >= 2 && parts[0] == "p" && parts[1] == my_pubkey.to_hex()
         });

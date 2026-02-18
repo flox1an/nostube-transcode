@@ -155,8 +155,9 @@ impl SubscriptionManager {
 
                                 if let Some(id) = job_id {
                                     let mut state_guard = state.write().await;
-                                    if let Some(bid) = state_guard.take_bid(&id) {
+                                    if let Some(mut bid) = state_guard.take_bid(&id) {
                                         info!(job_id = %id, "Received 'approved' feedback, starting pending job");
+                                        bid.context.approved = true;
                                         if let Err(e) = job_tx.send(bid.context).await {
                                             error!("Failed to queue approved job: {}", e);
                                         }
@@ -185,8 +186,9 @@ impl SubscriptionManager {
 
                                         if let Some(id) = job_id {
                                             let mut state_guard = state.write().await;
-                                            if let Some(bid) = state_guard.take_bid(&id) {
+                                            if let Some(mut bid) = state_guard.take_bid(&id) {
                                                 info!(job_id = %id, "Received private 'approved' feedback via NIP-17, starting job");
+                                                bid.context.approved = true;
                                                 if let Err(e) = job_tx.send(bid.context).await {
                                                     error!("Failed to queue approved job: {}", e);
                                                 }
