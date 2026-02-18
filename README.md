@@ -2,7 +2,15 @@
 
 A Nostr [Data Vending Machine](https://www.data-vending-machines.org/) that transforms videos into HLS format and uploads them to Blossom servers. Hardware-accelerated encoding with NVIDIA NVENC, Intel QSV/VAAPI, and Apple VideoToolbox.
 
-## Quick Start (Docker)
+## Quick Start
+
+**One-liner** (detects GPU, prompts for config, starts everything):
+
+```bash
+git clone https://github.com/nickhntv/divico-dvm.git && cd divico-dvm && ./setup.sh
+```
+
+**Manual Docker setup:**
 
 ```bash
 git clone https://github.com/nickhntv/divico-dvm.git
@@ -11,15 +19,8 @@ cp .env.example .env
 # Edit .env -- set OPERATOR_NPUB to your npub
 ```
 
-**NVIDIA GPU:**
-```bash
-docker compose -f docker-compose.nvidia.yml up -d
-```
-
-**Intel GPU / CPU:**
-```bash
-docker compose up -d
-```
+NVIDIA GPU: `docker compose -f docker-compose.nvidia.yml up -d`
+Intel GPU / CPU: `docker compose up -d`
 
 Open `http://localhost:3000` to manage your DVM.
 
