@@ -91,6 +91,17 @@ impl EventPublisher {
             return Ok(event_id);
         }
 
+        // Ensure all relay URLs are in the client pool before sending
+        let mut added = false;
+        for url in relay_urls {
+            if self.client.add_relay(url.as_str()).await.is_ok() {
+                added = true;
+            }
+        }
+        if added {
+            self.client.connect().await;
+        }
+
         for attempt in 1..=MAX_RETRIES {
             match self
                 .client
