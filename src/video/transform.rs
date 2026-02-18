@@ -313,6 +313,8 @@ impl VideoProcessor {
         input_url: &str,
         input_height: Option<u32>,
         codec: Codec,
+        progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+        duration: Option<f64>,
     ) -> Result<(TransformResult, TransformConfig), VideoError> {
         self.transform_with_resolutions(
             input_url,
@@ -321,6 +323,8 @@ impl VideoProcessor {
             &HlsResolution::all(),
             None,
             true,
+            progress,
+            duration,
         )
         .await
     }
@@ -342,6 +346,8 @@ impl VideoProcessor {
         selected_resolutions: &[HlsResolution],
         source_codec: Option<&str>,
         encryption: bool,
+        progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+        duration: Option<f64>,
     ) -> Result<(TransformResult, TransformConfig), VideoError> {
         let transform_config =
             TransformConfig::for_resolutions(input_height, selected_resolutions, source_codec);
@@ -377,6 +383,10 @@ impl VideoProcessor {
             codec,
         );
 
+        if let Some(d) = duration {
+            ffmpeg = ffmpeg.with_duration(d);
+        }
+
         // Only enable encryption if requested (uses TS segments)
         // Without encryption, uses fMP4 segments (Safari compatible for HEVC)
         let encryption_key_base64 = if encryption {
@@ -404,7 +414,7 @@ impl VideoProcessor {
             String::new()
         };
 
-        ffmpeg.run(&self.config.ffmpeg_path).await?;
+        ffmpeg.run(&self.config.ffmpeg_path, progress).await?;
 
         info!("FFmpeg HLS processing complete");
 
@@ -430,6 +440,8 @@ impl VideoProcessor {
         resolution: Resolution,
         quality: Option<u32>,
         codec: Codec,
+        progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+        duration: Option<f64>,
     ) -> Result<Mp4TransformResult, VideoError> {
         info!(
             url = %input_url,
@@ -459,7 +471,10 @@ impl VideoProcessor {
         if let Some(q) = quality {
             ffmpeg = ffmpeg.with_crf(q);
         }
-        ffmpeg.run(&self.config.ffmpeg_path).await?;
+        if let Some(d) = duration {
+            ffmpeg = ffmpeg.with_duration(d);
+        }
+        ffmpeg.run(&self.config.ffmpeg_path, progress).await?;
 
         info!(output = %output_path.display(), "MP4 transformation complete");
 

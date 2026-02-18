@@ -18,6 +18,8 @@ pub struct FfmpegCommand {
     codec: Codec,
     /// Path to HLS key info file for AES-128 encryption
     key_info_path: Option<PathBuf>,
+    /// Video duration in seconds
+    duration: Option<f64>,
 }
 
 impl FfmpegCommand {
@@ -35,7 +37,16 @@ impl FfmpegCommand {
             hwaccel,
             codec,
             key_info_path: None,
+            duration: None,
         }
+    }
+
+    /// Set the video duration to ensure FFmpeg stops correctly
+    pub fn with_duration(mut self, duration: f64) -> Self {
+        if duration > 0.0 {
+            self.duration = Some(duration);
+        }
+        self
     }
 
     /// Enable AES-128 encryption with the given key info file
@@ -87,14 +98,41 @@ impl FfmpegCommand {
     }
 
     /// Run the FFmpeg command asynchronously
-    pub async fn run(&self, ffmpeg_path: &Path) -> Result<(), VideoError> {
+    pub async fn run(
+        &self,
+        ffmpeg_path: &Path,
+        progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    ) -> Result<(), VideoError> {
         let mut cmd = TokioCommand::new(ffmpeg_path);
 
-        // Overwrite without asking
-        cmd.arg("-y");
+        // Overwrite without asking, non-interactive
+        cmd.arg("-y").arg("-nostdin");
+
+        // Progress reporting to stdout
+        if progress.is_some() {
+            cmd.arg("-progress").arg("-");
+            cmd.stdout(std::process::Stdio::piped());
+        }
+
+        // Add network reconnection options if input is a URL
+        if self.input.starts_with("http://") || self.input.starts_with("https://") {
+            cmd.arg("-reconnect")
+                .arg("1")
+                .arg("-reconnect_at_eof")
+                .arg("1")
+                .arg("-reconnect_streamed")
+                .arg("1")
+                .arg("-reconnect_delay_max")
+                .arg("2");
+        }
 
         // Hardware acceleration input options (before -i)
         self.add_hwaccel_input_options(&mut cmd);
+
+        // Limit duration if provided
+        if let Some(d) = self.duration {
+            cmd.arg("-t").arg(d.to_string());
+        }
 
         // Input
         cmd.arg("-i").arg(&self.input);
@@ -150,25 +188,21 @@ impl FfmpegCommand {
 
         debug!(command = ?cmd, hwaccel = %self.hwaccel, "Running FFmpeg");
 
-        // In debug mode, show FFmpeg output in real-time
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            cmd.stdout(std::process::Stdio::inherit());
-            cmd.stderr(std::process::Stdio::inherit());
+        let mut child = cmd.spawn().map_err(VideoError::Io)?;
 
-            let status = cmd.status().await.map_err(VideoError::Io)?;
+        // If progress tracking is enabled, spawn a task to read stdout
+        if let Some(p) = progress {
+            let tracker = crate::util::ffmpeg_progress::FfmpegProgressTracker { progress_ms: p };
+            let stdout = child.stdout.take().expect("Stdout must be piped");
+            tracker.track_progress(stdout).await.map_err(VideoError::Io)?;
+        }
 
-            if !status.success() {
-                return Err(VideoError::FfmpegFailed(
-                    "FFmpeg failed (see output above)".to_string(),
-                ));
-            }
-        } else {
-            let output = cmd.output().await.map_err(VideoError::Io)?;
+        let status = child.wait().await.map_err(VideoError::Io)?;
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(VideoError::FfmpegFailed(stderr.to_string()));
-            }
+        if !status.success() {
+            return Err(VideoError::FfmpegFailed(
+                "FFmpeg failed (see logs above if DEBUG enabled)".to_string(),
+            ));
         }
 
         Ok(())
@@ -432,6 +466,7 @@ pub struct FfmpegMp4Command {
     audio_bitrate: String,
     hwaccel: HwAccel,
     codec: Codec,
+    duration: Option<f64>,
 }
 
 impl FfmpegMp4Command {
@@ -450,7 +485,16 @@ impl FfmpegMp4Command {
             audio_bitrate: "128k".to_string(),
             hwaccel,
             codec,
+            duration: None,
         }
+    }
+
+    /// Set the video duration to ensure FFmpeg stops correctly
+    pub fn with_duration(mut self, duration: f64) -> Self {
+        if duration > 0.0 {
+            self.duration = Some(duration);
+        }
+        self
     }
 
     /// Set the CRF (quality) value
@@ -460,14 +504,41 @@ impl FfmpegMp4Command {
     }
 
     /// Run the FFmpeg MP4 encoding command asynchronously
-    pub async fn run(&self, ffmpeg_path: &Path) -> Result<(), VideoError> {
+    pub async fn run(
+        &self,
+        ffmpeg_path: &Path,
+        progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    ) -> Result<(), VideoError> {
         let mut cmd = TokioCommand::new(ffmpeg_path);
 
-        // Overwrite without asking
-        cmd.arg("-y");
+        // Overwrite without asking, non-interactive
+        cmd.arg("-y").arg("-nostdin");
+
+        // Progress reporting to stdout
+        if progress.is_some() {
+            cmd.arg("-progress").arg("-");
+            cmd.stdout(std::process::Stdio::piped());
+        }
+
+        // Add network reconnection options if input is a URL
+        if self.input.starts_with("http://") || self.input.starts_with("https://") {
+            cmd.arg("-reconnect")
+                .arg("1")
+                .arg("-reconnect_at_eof")
+                .arg("1")
+                .arg("-reconnect_streamed")
+                .arg("1")
+                .arg("-reconnect_delay_max")
+                .arg("2");
+        }
 
         // Hardware acceleration input options (before -i)
         self.add_hwaccel_input_options(&mut cmd);
+
+        // Limit duration if provided
+        if let Some(d) = self.duration {
+            cmd.arg("-t").arg(d.to_string());
+        }
 
         // Input
         cmd.arg("-i").arg(&self.input);
@@ -515,30 +586,29 @@ impl FfmpegMp4Command {
             .arg("-b:a")
             .arg(&self.audio_bitrate);
 
+        // MP4 streaming optimization
+        cmd.arg("-movflags").arg("+faststart");
+
         // Output file
         cmd.arg(&self.output_path);
 
         debug!(command = ?cmd, hwaccel = %self.hwaccel, "Running FFmpeg MP4 encoding");
 
-        // In debug mode, show FFmpeg output in real-time
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            cmd.stdout(std::process::Stdio::inherit());
-            cmd.stderr(std::process::Stdio::inherit());
+        let mut child = cmd.spawn().map_err(VideoError::Io)?;
 
-            let status = cmd.status().await.map_err(VideoError::Io)?;
+        // If progress tracking is enabled, spawn a task to read stdout
+        if let Some(p) = progress {
+            let tracker = crate::util::ffmpeg_progress::FfmpegProgressTracker { progress_ms: p };
+            let stdout = child.stdout.take().expect("Stdout must be piped");
+            tracker.track_progress(stdout).await.map_err(VideoError::Io)?;
+        }
 
-            if !status.success() {
-                return Err(VideoError::FfmpegFailed(
-                    "FFmpeg failed (see output above)".to_string(),
-                ));
-            }
-        } else {
-            let output = cmd.output().await.map_err(VideoError::Io)?;
+        let status = child.wait().await.map_err(VideoError::Io)?;
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(VideoError::FfmpegFailed(stderr.to_string()));
-            }
+        if !status.success() {
+            return Err(VideoError::FfmpegFailed(
+                "FFmpeg MP4 encoding failed (see logs above if DEBUG enabled)".to_string(),
+            ));
         }
 
         Ok(())

@@ -231,10 +231,10 @@ fn test_config_default_values() {
 
     assert_eq!(config.version, 1);
     assert!(config.admin.is_none());
-    assert!(config.relays.is_empty());
-    assert!(config.blossom_servers.is_empty());
+    assert_eq!(config.relays.len(), 3);
+    assert_eq!(config.blossom_servers.len(), 1);
     assert_eq!(config.blob_expiration_days, 30); // default
-    assert!(config.name.is_none());
-    assert!(config.about.is_none());
+    assert_eq!(config.name, Some("Video Transcoder DVM".to_string()));
+    assert_eq!(config.about, Some("Transforms videos to HLS and MP4 via Blossom".to_string()));
     assert!(!config.paused); // default false
 }

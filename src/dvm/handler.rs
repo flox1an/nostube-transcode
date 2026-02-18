@@ -320,8 +320,11 @@ impl JobHandler {
                 )
                 .await?;
 
-                // Estimate: hardware encoding is roughly 2-5x realtime, use 3x as baseline
-                let estimated_transcode_secs = (video_duration_secs / 3.0) as u64;
+                // Estimate: conservatively assume 2x realtime for initial progress
+                let estimated_transcode_secs = (video_duration_secs * 2.0) as u64;
+
+                // Create shared atomic counter for real-time progress tracking from FFmpeg
+                let progress_ms = Arc::new(AtomicU64::new(0));
 
                 // Transform with periodic progress updates
                 // Use quality 15 for good quality on VideoToolbox (maps to q:v 70)
@@ -330,11 +333,15 @@ impl JobHandler {
                         job,
                         &status_msg,
                         estimated_transcode_secs,
+                        video_duration_secs,
+                        progress_ms.clone(),
                         self.processor.transform_mp4(
                             input_url,
                             job.resolution,
                             Some(15),
                             job.codec,
+                            Some(progress_ms),
+                            Some(video_duration_secs),
                         ),
                     )
                     .await?;
@@ -432,8 +439,12 @@ impl JobHandler {
                     .iter()
                     .filter(|r| **r != HlsResolution::Original)
                     .count() as f64;
+                // Estimate: conservatively assume realtime encoding per resolution
                 let estimated_transcode_secs =
-                    (video_duration_secs / 3.0 * encoded_count.max(1.0)) as u64;
+                    (video_duration_secs * encoded_count.max(1.0)) as u64;
+
+                // Create shared atomic counter for real-time progress tracking from FFmpeg
+                let progress_ms = Arc::new(AtomicU64::new(0));
 
                 // Transform with periodic progress updates using user-selected resolutions
                 let (result, _transform_config) = self
@@ -441,6 +452,8 @@ impl JobHandler {
                         job,
                         &status_msg,
                         estimated_transcode_secs,
+                        video_duration_secs,
+                        progress_ms.clone(),
                         self.processor.transform_with_resolutions(
                             input_url,
                             input_height,
@@ -448,6 +461,8 @@ impl JobHandler {
                             &selected_resolutions,
                             source_codec.as_deref(),
                             job.encryption,
+                            Some(progress_ms),
+                            Some(video_duration_secs),
                         ),
                     )
                     .await?;
@@ -484,12 +499,14 @@ impl JobHandler {
         }
     }
 
-    /// Run a future with periodic progress updates every 10 seconds
+    /// Run a future with periodic progress updates every 5 seconds
     async fn run_with_progress<T, E, F>(
         &self,
         job: &JobContext,
         message: &str,
         estimated_secs: u64,
+        total_duration_secs: f64,
+        progress_ms: Arc<AtomicU64>,
         future: F,
     ) -> Result<T, E>
     where
@@ -514,11 +531,29 @@ impl JobHandler {
 
             loop {
                 ticker.tick().await;
-                let elapsed = start.elapsed().as_secs();
+                let elapsed_secs = start.elapsed().as_secs();
+                let actual_ms = progress_ms.load(Ordering::Relaxed);
+                let actual_secs = actual_ms as f64 / 1000.0;
 
-                let (progress_msg, remaining_secs, progress_pct) = if estimated_secs > 0 {
-                    let remaining = estimated_secs.saturating_sub(elapsed);
-                    let pct = ((elapsed as f64 / estimated_secs as f64) * 100.0).min(99.0) as u32;
+                let (progress_msg, remaining_secs, progress_pct) = if actual_ms > 0 && total_duration_secs > 0.0 {
+                    // Use real-time progress from FFmpeg if available
+                    let pct = ((actual_secs / total_duration_secs) * 100.0).min(99.0) as u32;
+                    let speed = if elapsed_secs > 0 { actual_secs / elapsed_secs as f64 } else { 0.0 };
+                    let remaining = if speed > 0.01 {
+                        ((total_duration_secs - actual_secs) / speed) as u64
+                    } else {
+                        estimated_secs.saturating_sub(elapsed_secs)
+                    };
+
+                    (
+                        format!("{} ({}%, ~{} remaining)", message, pct, format_duration(remaining)),
+                        Some(remaining),
+                        Some(pct),
+                    )
+                } else if estimated_secs > 0 {
+                    // Fall back to time-based estimation if real progress not yet available
+                    let remaining = estimated_secs.saturating_sub(elapsed_secs);
+                    let pct = ((elapsed_secs as f64 / estimated_secs as f64) * 100.0).min(99.0) as u32;
                     (
                         format!("{} (~{} remaining)", message, format_duration(remaining)),
                         Some(remaining),
@@ -526,7 +561,7 @@ impl JobHandler {
                     )
                 } else {
                     (
-                        format!("{} ({} elapsed)", message, format_duration(elapsed)),
+                        format!("{} ({} elapsed)", message, format_duration(elapsed_secs)),
                         None,
                         None,
                     )
@@ -545,6 +580,7 @@ impl JobHandler {
                 debug!(
                     job_id = %job_id,
                     progress = ?progress_pct,
+                    actual_secs = %actual_secs,
                     eta = ?remaining_secs,
                     message = %progress_msg,
                     "Sending periodic transcode progress update"

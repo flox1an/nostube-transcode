@@ -1,4 +1,5 @@
 pub mod ffmpeg_discovery;
+pub mod ffmpeg_progress;
 pub mod hash;
 pub mod temp;
 
