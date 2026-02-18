@@ -10,6 +10,7 @@
 
 services:
   dvm-video:
+    image: ghcr.io/flox1an/nostube-transcode:latest-nvidia
     build:
       context: .
       dockerfile: Dockerfile.nvidia

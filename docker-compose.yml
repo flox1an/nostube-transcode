@@ -9,6 +9,7 @@
 
 services:
   dvm-video:
+    image: ghcr.io/flox1an/nostube-transcode:latest
     build: .
     container_name: dvm-video-processing
     restart: unless-stopped

@@ -204,8 +204,9 @@ start_dvm() {
       ;;
   esac
 
-  info "Building and starting container..."
-  docker compose -f "$COMPOSE_FILE" up -d --build
+  info "Pulling pre-built image (or building from source if unavailable)..."
+  docker compose -f "$COMPOSE_FILE" pull 2>/dev/null || true
+  docker compose -f "$COMPOSE_FILE" up -d
 
   echo ""
   info "DVM is starting. Open http://localhost:3000 to manage it."
