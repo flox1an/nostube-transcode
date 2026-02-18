@@ -64,7 +64,11 @@ fn default_expiration() -> u32 {
 }
 
 fn default_relays() -> Vec<String> {
-    vec!["wss://relay.nostu.be".to_string()]
+    vec![
+        "wss://relay.nostu.be".to_string(),
+        "wss://nos.lol".to_string(),
+        "wss://relay.primal.net".to_string(),
+    ]
 }
 
 fn default_blossom_servers() -> Vec<String> {
@@ -215,8 +219,10 @@ mod tests {
         let config: RemoteConfig = serde_json::from_str(json).unwrap();
 
         assert_eq!(config.blob_expiration_days, 30);
-        assert_eq!(config.relays.len(), 1);
-        assert_eq!(config.relays[0], "wss://relay.nostu.be");
+        assert_eq!(config.relays.len(), 3);
+        assert!(config.relays.contains(&"wss://relay.nostu.be".to_string()));
+        assert!(config.relays.contains(&"wss://nos.lol".to_string()));
+        assert!(config.relays.contains(&"wss://relay.primal.net".to_string()));
         assert_eq!(config.blossom_servers.len(), 1);
         assert_eq!(config.blossom_servers[0], "https://transformed.nostu.be/");
         assert_eq!(config.name, Some("Video Transcoder DVM".to_string()));
