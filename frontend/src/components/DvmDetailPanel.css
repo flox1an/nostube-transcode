@@ -849,3 +849,81 @@
   max-width: 800px;
 }
 
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .dvm-detail-panel {
+    padding: 1rem;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  }
+
+  .stat-card {
+    padding: 0.875rem;
+  }
+
+  .stat-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 1.125rem;
+  }
+
+  .overview-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .detail-tabs button {
+    padding: 0.625rem 0.875rem;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+  }
+
+  .recent-jobs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .jobs-table {
+    min-width: 500px;
+  }
+
+  .jobs-table .truncate {
+    max-width: 120px;
+  }
+
+  .config-form {
+    padding: 1rem;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .video-form {
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions .save-btn,
+  .form-actions .cancel-btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+

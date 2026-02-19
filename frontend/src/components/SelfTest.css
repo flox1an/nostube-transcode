@@ -268,3 +268,14 @@
   padding-top: 1rem;
   border-top: 1px solid #333;
 }
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-info-grid {
+    grid-template-columns: 1fr;
+  }
+}

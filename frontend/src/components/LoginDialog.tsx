@@ -3,7 +3,7 @@ import { nip19 } from "nostr-tools";
 import { QRCodeSVG } from "qrcode.react";
 import { NostrConnectSigner } from "applesauce-signers/signers";
 import { useCurrentUser } from "../hooks/useCurrentUser";
-import { IconQrCode, IconCpu, IconDatabase, IconKey, IconAlertTriangle, IconFileText } from "./Icons";
+import { IconQrCode, IconCpu, IconDatabase, IconKey, IconAlertTriangle, IconFileText, IconCopy, IconCheck } from "./Icons";
 import { RELAYS } from "../nostr/constants";
 
 type LoginMethod = "nostrconnect" | "extension" | "bunker" | "nsec";
@@ -23,6 +23,7 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
   // Nostr Connect state
   const [connectUri, setConnectUri] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const cleanupConnect = useCallback(() => {
@@ -204,6 +205,17 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
                   level="M"
                   marginSize={2}
                 />
+                <button
+                  className={`copy-uri-button ${copied ? "copied" : ""}`}
+                  onClick={() => {
+                    navigator.clipboard.writeText(connectUri);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                >
+                  {copied ? <IconCheck width={14} height={14} /> : <IconCopy width={14} height={14} />}
+                  {copied ? "Copied!" : "Copy URI"}
+                </button>
                 <p className="qr-waiting">Waiting for connection...</p>
               </div>
             ) : (
