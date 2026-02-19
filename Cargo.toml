@@ -1,6 +1,6 @@
 [package]
 name = "nostube-transcode"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 rust-version = "1.85.0"
 
@@ -28,6 +28,7 @@ base64 = "0.22"
 
 # Environment & config
 dirs = "5.0"
+dotenvy = "0.15"
 
 # Logging
 tracing = "0.1"

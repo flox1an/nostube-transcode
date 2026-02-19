@@ -6,7 +6,6 @@
 use crate::bootstrap::get_bootstrap_relays;
 use crate::config::Config;
 use crate::dvm_state::{DvmState, SharedDvmState};
-use crate::identity::load_or_generate_identity;
 use crate::remote_config::{fetch_config, RemoteConfig};
 use crate::util::ffmpeg_discovery::FfmpegPaths;
 use nostr_sdk::prelude::*;
@@ -27,11 +26,13 @@ pub struct StartupResult {
 /// 3. Connect to bootstrap relays
 /// 4. Fetch remote config (if exists)
 /// 5. Set admin from OPERATOR_NPUB if not already in remote config
-/// 6. Create DVM state
+/// 6. Discover FFmpeg binaries
+/// 7. Create Config from RemoteConfig
+/// 8. Create DVM state
 pub async fn initialize() -> Result<StartupResult, Box<dyn std::error::Error>> {
     // Step 1: Load or generate identity
     tracing::info!("Loading identity...");
-    let keys = load_or_generate_identity()?;
+    let keys = crate::identity::load_or_generate_identity()?;
     let npub = keys.public_key().to_bech32().unwrap_or_default();
     tracing::info!("DVM pubkey: {}", npub);
 

@@ -13,6 +13,22 @@ use tokio::sync::Notify;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load environment variables from .env or data/env before doing anything else
+    // Try .env in current directory first
+    if let Err(e) = dotenvy::dotenv() {
+        if !e.not_found() {
+            eprintln!("Warning: Error loading .env file: {}", e);
+        }
+    }
+
+    // Also try to load from the data directory's env file (used by the installer)
+    let env_path = nostube_transcode::identity::default_data_dir().join("env");
+    if env_path.exists() {
+        if let Err(e) = dotenvy::from_path(&env_path) {
+            eprintln!("Warning: Error loading env file from {:?}: {}", env_path, e);
+        }
+    }
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
