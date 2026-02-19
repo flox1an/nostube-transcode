@@ -7,7 +7,7 @@ import "./Dashboard.css";
 
 import { UserAvatar } from "./components/UserAvatar";
 import { UserName } from "./components/UserName";
-import { IconDivico, IconTv } from "./components/Icons";
+import { IconNostube, IconTv } from "./components/Icons";
 
 export function Dashboard() {
   const { user, isLoggedIn, logout } = useCurrentUser();
@@ -28,8 +28,8 @@ export function Dashboard() {
     return (
       <div className="dashboard">
         <div className="login-screen">
-          <IconDivico className="brand-icon big" />
-          <h1>Divico</h1>
+          <IconNostube className="brand-icon big" />
+          <h1>Nostube</h1>
           <p>The Nostr Video Data Vending Machine</p>
           <LoginDialog onLogin={() => setErrorMessage(null)} onError={setErrorMessage} />
           {errorMessage && <p className="error-message">{errorMessage}</p>}
@@ -42,9 +42,9 @@ export function Dashboard() {
     <div className="dashboard">
       <header className="dashboard-header">
         <div className="header-brand">
-          <IconDivico className="brand-icon" />
+          <IconNostube className="brand-icon" />
           <div className="brand-text">
-            <h1>Divico</h1>
+            <h1>Nostube</h1>
             <span className="brand-subtitle">Nostr Video DVM</span>
           </div>
         </div>
@@ -75,7 +75,7 @@ export function Dashboard() {
               <div className="no-selection">
                 <div className="no-selection-content">
                   <IconTv className="no-selection-icon" />
-                  <h2>Welcome to Divico</h2>
+                  <h2>Welcome to Nostube</h2>
                   <p>Select a DVM from the sidebar to manage it or submit a video for processing.</p>
                 </div>
               </div>

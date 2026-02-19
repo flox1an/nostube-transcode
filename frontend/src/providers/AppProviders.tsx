@@ -7,8 +7,8 @@ import { AccountManager } from 'applesauce-accounts'
 import { registerCommonAccountTypes } from 'applesauce-accounts/accounts'
 import { eventStore } from '../nostr/core'
 
-const ACCOUNTS_KEY = 'divico:accounts'
-const ACTIVE_KEY = 'divico:active'
+const ACCOUNTS_KEY = 'nostube:accounts'
+const ACTIVE_KEY = 'nostube:active'
 
 const accountManager = new AccountManager()
 registerCommonAccountTypes(accountManager)
