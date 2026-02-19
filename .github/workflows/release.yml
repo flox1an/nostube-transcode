@@ -82,6 +82,9 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
 
+      - name: Install protobuf
+        run: brew install protobuf
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
