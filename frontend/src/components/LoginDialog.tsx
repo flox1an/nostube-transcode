@@ -1,9 +1,12 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { nip19 } from "nostr-tools";
+import { QRCodeSVG } from "qrcode.react";
+import { NostrConnectSigner } from "applesauce-signers/signers";
 import { useCurrentUser } from "../hooks/useCurrentUser";
-import { IconCpu, IconDatabase, IconKey, IconAlertTriangle, IconFileText } from "./Icons";
+import { IconQrCode, IconCpu, IconDatabase, IconKey, IconAlertTriangle, IconFileText } from "./Icons";
+import { RELAYS } from "../nostr/constants";
 
-type LoginMethod = "extension" | "nsec" | "bunker";
+type LoginMethod = "nostrconnect" | "extension" | "bunker" | "nsec";
 
 interface LoginDialogProps {
   onLogin: () => void;
@@ -11,12 +14,63 @@ interface LoginDialogProps {
 }
 
 export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
-  const { loginWithExtension, loginWithNsec, loginWithBunker } = useCurrentUser();
-  const [activeTab, setActiveTab] = useState<LoginMethod>("extension");
+  const { loginWithExtension, loginWithNsec, loginWithBunker, loginWithNostrConnect } = useCurrentUser();
+  const [activeTab, setActiveTab] = useState<LoginMethod>("nostrconnect");
   const [isLoading, setIsLoading] = useState(false);
   const [nsec, setNsec] = useState("");
   const [bunkerUri, setBunkerUri] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Nostr Connect state
+  const [connectUri, setConnectUri] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cleanupConnect = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setConnectUri(null);
+  }, []);
+
+  const initNostrConnect = useCallback(async () => {
+    cleanupConnect();
+
+    const signer = new NostrConnectSigner({
+      relays: RELAYS,
+    });
+
+    const uri = signer.getNostrConnectURI({
+      name: "Nostube Transform",
+      permissions: ["sign_event", "nip44_encrypt", "nip44_decrypt"],
+    });
+
+    setConnectUri(uri);
+
+    const abort = new AbortController();
+    abortRef.current = abort;
+
+    try {
+      await signer.waitForSigner(abort.signal);
+      if (!abort.signal.aborted) {
+        await loginWithNostrConnect(signer);
+        onLogin();
+      }
+    } catch (err) {
+      if (!abort.signal.aborted) {
+        onError(err instanceof Error ? err.message : "Nostr Connect failed");
+        cleanupConnect();
+      }
+    }
+  }, [cleanupConnect, loginWithNostrConnect, onLogin, onError]);
+
+  // Start Nostr Connect when tab is active
+  useEffect(() => {
+    if (activeTab === "nostrconnect") {
+      initNostrConnect();
+    } else {
+      cleanupConnect();
+    }
+    return () => cleanupConnect();
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasExtension = () => {
     return typeof window !== "undefined" && "nostr" in window;
@@ -45,7 +99,6 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
       return;
     }
 
-    // Validate nsec format
     try {
       const decoded = nip19.decode(nsec.trim());
       if (decoded.type !== "nsec") {
@@ -60,7 +113,7 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
     setIsLoading(true);
     try {
       await loginWithNsec(nsec.trim());
-      setNsec(""); // Clear for security
+      setNsec("");
       onLogin();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Nsec login failed");
@@ -108,6 +161,12 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
     <div className="login-dialog">
       <div className="login-tabs">
         <button
+          className={`login-tab ${activeTab === "nostrconnect" ? "active" : ""}`}
+          onClick={() => setActiveTab("nostrconnect")}
+        >
+          <IconQrCode className="tab-icon" /> Connect
+        </button>
+        <button
           className={`login-tab ${activeTab === "extension" ? "active" : ""}`}
           onClick={() => setActiveTab("extension")}
         >
@@ -128,6 +187,33 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
       </div>
 
       <div className="login-content">
+        {activeTab === "nostrconnect" && (
+          <div className="login-method">
+            <h3 className="method-title">Nostr Connect</h3>
+            <p className="method-description">
+              Scan with a <strong>NIP-46</strong> compatible signer app like{" "}
+              <strong>Amber</strong>, <strong>Nostore</strong>, or <strong>nsec.app</strong>.
+            </p>
+            {connectUri ? (
+              <div className="qr-container">
+                <QRCodeSVG
+                  value={connectUri}
+                  size={200}
+                  bgColor="#ffffff"
+                  fgColor="#000000"
+                  level="M"
+                  marginSize={2}
+                />
+                <p className="qr-waiting">Waiting for connection...</p>
+              </div>
+            ) : (
+              <div className="qr-container">
+                <p className="qr-waiting">Generating...</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === "extension" && (
           <div className="login-method">
             <h3 className="method-title">Browser Extension</h3>
@@ -189,9 +275,9 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
 
         {activeTab === "bunker" && (
           <div className="login-method">
-            <h3 className="method-title">Nostr Connect</h3>
+            <h3 className="method-title">Bunker URI</h3>
             <p className="method-description">
-              Use a remote signer via <strong>NIP-46</strong>. Provide your bunker address or connection URI.
+              Paste a <strong>bunker://</strong> connection string from your remote signer.
             </p>
             <div className="input-group">
               <label>Bunker URI</label>
@@ -199,10 +285,10 @@ export function LoginDialog({ onLogin, onError }: LoginDialogProps) {
                 type="text"
                 value={bunkerUri}
                 onChange={(e) => setBunkerUri(e.target.value)}
-                placeholder="bunker://... or npub@domain.com"
+                placeholder="bunker://..."
                 className="login-input"
               />
-              {bunkerUri && !bunkerUri.startsWith("bunker://") && !bunkerUri.includes("@") && (
+              {bunkerUri && !bunkerUri.startsWith("bunker://") && (
                 <p className="input-error">Invalid bunker format</p>
               )}
             </div>

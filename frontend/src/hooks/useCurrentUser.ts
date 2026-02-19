@@ -52,6 +52,16 @@ export function useCurrentUser() {
     accountManager.setActive(account)
   }
 
+  const loginWithNostrConnect = async (signer: NostrConnectSigner) => {
+    if (!accountManager) throw new Error('Account manager not available')
+
+    const pubkey = await signer.getPublicKey()
+    const account = new NostrConnectAccount(pubkey, signer)
+
+    await accountManager.addAccount(account)
+    accountManager.setActive(account)
+  }
+
   const logout = () => {
     if (activeAccount && accountManager) {
       // @ts-ignore
@@ -66,6 +76,7 @@ export function useCurrentUser() {
     loginWithExtension,
     loginWithNsec,
     loginWithBunker,
+    loginWithNostrConnect,
     logout,
   }
 }

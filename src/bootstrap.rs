@@ -9,6 +9,7 @@ pub const DEFAULT_BOOTSTRAP_RELAYS: &[&str] = &[
     "wss://nos.lol",
     "wss://relay.primal.net",
     "wss://relay.nostu.be",
+    "wss://relay.snort.social",
 ];
 
 /// Returns bootstrap relays from environment or defaults.
@@ -44,7 +45,7 @@ mod tests {
 
         let relays = get_bootstrap_relays();
 
-        assert_eq!(relays.len(), 3);
+        assert_eq!(relays.len(), 4);
         assert!(relays[0].to_string().contains("nos.lol"));
     }
 

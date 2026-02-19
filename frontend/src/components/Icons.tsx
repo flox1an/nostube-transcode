@@ -137,6 +137,22 @@ export function IconNostube(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function IconQrCode(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="2" y="2" width="8" height="8" rx="1"></rect>
+      <rect x="14" y="2" width="8" height="8" rx="1"></rect>
+      <rect x="2" y="14" width="8" height="8" rx="1"></rect>
+      <rect x="14" y="14" width="4" height="4" rx="0.5"></rect>
+      <line x1="22" y1="14" x2="22" y2="18"></line>
+      <line x1="18" y1="22" x2="22" y2="22"></line>
+      <rect x="5" y="5" width="2" height="2"></rect>
+      <rect x="17" y="5" width="2" height="2"></rect>
+      <rect x="5" y="17" width="2" height="2"></rect>
+    </svg>
+  );
+}
+
 export function IconLink(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>

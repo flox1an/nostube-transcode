@@ -68,6 +68,7 @@ fn default_relays() -> Vec<String> {
         "wss://relay.nostu.be".to_string(),
         "wss://nos.lol".to_string(),
         "wss://relay.primal.net".to_string(),
+        "wss://relay.snort.social".to_string(),
     ]
 }
 
