@@ -2,7 +2,21 @@
 
 A Nostr [Data Vending Machine](https://www.data-vending-machines.org/) that transforms videos into HLS format and uploads them to Blossom servers. Hardware-accelerated encoding with NVIDIA NVENC, Intel QSV/VAAPI, and Apple VideoToolbox.
 
-## Quick Start
+## Install
+
+Download a static binary (Linux x86_64 or macOS Apple Silicon):
+
+```bash
+curl -sSf https://raw.githubusercontent.com/flox1an/nostube-transcode/main/install.sh | bash
+```
+
+Pin a specific version:
+
+```bash
+VERSION=v0.1.2 curl -sSf https://raw.githubusercontent.com/flox1an/nostube-transcode/main/install.sh | bash
+```
+
+## Quick Start (Docker)
 
 **One-liner** (detects GPU, prompts for config, starts everything):
 

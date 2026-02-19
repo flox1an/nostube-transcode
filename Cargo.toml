@@ -1,5 +1,5 @@
 [package]
-name = "dvm-video-processing"
+name = "nostube-transcode"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85.0"
@@ -12,7 +12,7 @@ tokio = { version = "1.40", features = ["full", "signal"] }
 nostr-sdk = "0.35"
 
 # Cashu
-cdk = { version = "0.14", features = ["nostr"] }
+cdk = { version = "0.14", default-features = false, features = ["nostr"] }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }

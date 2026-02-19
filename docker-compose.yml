@@ -8,10 +8,10 @@
 # See docs/deployment.md for Intel GPU setup and group ID configuration.
 
 services:
-  dvm-video:
+  nostube-transcode:
     image: ghcr.io/flox1an/nostube-transcode:latest
     build: .
-    container_name: dvm-video-processing
+    container_name: nostube-transcode
     restart: unless-stopped
 
     # CRITICAL: Pass Intel GPU render device for QSV hardware acceleration

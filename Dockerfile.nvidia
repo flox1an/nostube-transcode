@@ -31,7 +31,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
-    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy manifests first for better layer caching
@@ -43,7 +42,7 @@ RUN mkdir -p src frontend/dist && \
     touch frontend/dist/.keep
 
 # Build dependencies only
-RUN cargo build --release && rm -rf src target/release/deps/dvm*
+RUN cargo build --release && rm -rf src target/release/deps/nostube*
 
 # Copy actual source code and frontend build
 COPY src ./src
@@ -80,7 +79,7 @@ RUN useradd -m dvm || true
 WORKDIR /app
 
 # Copy the built binary
-COPY --from=builder /app/target/release/dvm-video-processing /usr/local/bin/dvm-video-processing
+COPY --from=builder /app/target/release/nostube-transcode /usr/local/bin/nostube-transcode
 
 # Create temp directory with proper permissions
 RUN mkdir -p /app/temp && chown -R dvm:dvm /app
@@ -102,4 +101,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -sf http://localhost:3000/ || exit 1
 
-CMD ["dvm-video-processing"]
+CMD ["nostube-transcode"]

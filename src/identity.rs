@@ -19,16 +19,27 @@ pub enum IdentityError {
 
 /// Returns the default data directory for the DVM.
 ///
-/// - Linux/macOS: `~/.local/share/dvm-video/`
+/// - Linux/macOS: `~/.local/share/nostube-transcode/`
 /// - Respects `DATA_DIR` environment variable if set
 pub fn default_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("DATA_DIR") {
         return PathBuf::from(dir);
     }
 
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("dvm-video")
+    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+
+    // Migrate old data directory if it exists
+    let old_dir = base.join("dvm-video");
+    let new_dir = base.join("nostube-transcode");
+    if old_dir.exists() && !new_dir.exists() {
+        if let Err(e) = std::fs::rename(&old_dir, &new_dir) {
+            tracing::warn!("Failed to migrate data dir from {:?} to {:?}: {}", old_dir, new_dir, e);
+            return old_dir;
+        }
+        tracing::info!("Migrated data directory from {:?} to {:?}", old_dir, new_dir);
+    }
+
+    new_dir
 }
 
 /// Returns the path to the identity key file.
@@ -92,7 +103,7 @@ mod tests {
 
     /// Helper to load or generate identity using a specific data directory
     fn load_or_generate_identity_in_dir(data_dir: &std::path::Path) -> Result<Keys, IdentityError> {
-        let key_path = data_dir.join("dvm-video").join("identity.key");
+        let key_path = data_dir.join("nostube-transcode").join("identity.key");
 
         if key_path.exists() {
             load_identity(&key_path)
@@ -108,7 +119,7 @@ mod tests {
         let _keys = load_or_generate_identity_in_dir(dir.path()).unwrap();
 
         // Verify key file was created
-        let key_path = dir.path().join("dvm-video").join("identity.key");
+        let key_path = dir.path().join("nostube-transcode").join("identity.key");
         assert!(key_path.exists());
 
         // Verify content is valid hex
@@ -133,7 +144,7 @@ mod tests {
     #[test]
     fn test_invalid_key_format() {
         let dir = tempdir().unwrap();
-        let key_path = dir.path().join("dvm-video");
+        let key_path = dir.path().join("nostube-transcode");
         std::fs::create_dir_all(&key_path).unwrap();
         std::fs::write(key_path.join("identity.key"), "invalid-key").unwrap();
 

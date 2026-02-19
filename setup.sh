@@ -211,7 +211,7 @@ start_dvm() {
   echo ""
   info "DVM is starting. Open http://localhost:3000 to manage it."
   echo ""
-  echo "  View logs:  docker logs -f dvm-video-processing"
+  echo "  View logs:  docker logs -f nostube-transcode"
   echo "  Stop:       docker compose -f ${COMPOSE_FILE} down"
   echo ""
 }

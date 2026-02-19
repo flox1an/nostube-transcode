@@ -8,7 +8,7 @@ set -euo pipefail
 REPO="flox1an/nostube-transcode"
 BINARY_NAME="nostube-transcode"
 INSTALL_DIR="/usr/local/bin"
-DATA_DIR="${HOME}/.local/share/dvm-video"
+DATA_DIR="${HOME}/.local/share/nostube-transcode"
 ENV_FILE="${DATA_DIR}/env"
 
 # Colors (if terminal supports them)
@@ -95,7 +95,7 @@ download_and_install() {
   local tmpdir
 
   tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' EXIT
+  trap 'rm -rf "${tmpdir:-}"' EXIT
 
   info "Downloading ${archive}..."
   if ! curl -sSfL -o "${tmpdir}/${archive}" "$url"; then
@@ -108,7 +108,7 @@ download_and_install() {
   tar -xzf "${tmpdir}/${archive}" -C "$tmpdir"
 
   info "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
-  sudo install -m 755 "${tmpdir}/dvm-video-processing" "${INSTALL_DIR}/${BINARY_NAME}"
+  sudo install -m 755 "${tmpdir}/nostube-transcode" "${INSTALL_DIR}/${BINARY_NAME}"
 
   info "Installed ${BINARY_NAME} ${TAG}"
 }

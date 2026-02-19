@@ -1,13 +1,13 @@
 use tokio::signal;
 use tracing::info;
 
-use dvm_video_processing::admin::run_admin_listener;
-use dvm_video_processing::blossom::BlossomClient;
-use dvm_video_processing::dvm::{AnnouncementPublisher, JobHandler};
-use dvm_video_processing::nostr::{EventPublisher, SubscriptionManager};
-use dvm_video_processing::startup::initialize;
-use dvm_video_processing::video::{HwAccel, VideoProcessor};
-use dvm_video_processing::web::run_server;
+use nostube_transcode::admin::run_admin_listener;
+use nostube_transcode::blossom::BlossomClient;
+use nostube_transcode::dvm::{AnnouncementPublisher, JobHandler};
+use nostube_transcode::nostr::{EventPublisher, SubscriptionManager};
+use nostube_transcode::startup::initialize;
+use nostube_transcode::video::{HwAccel, VideoProcessor};
+use nostube_transcode::web::run_server;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("dvm_video_processing=debug".parse()?),
+                .add_directive("nostube_transcode=debug".parse()?),
         )
         .init();
 

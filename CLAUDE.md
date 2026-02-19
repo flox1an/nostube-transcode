@@ -27,7 +27,7 @@ cargo clippy
 cargo fmt --check
 
 # With debug logging
-RUST_LOG=dvm_video_processing=debug cargo run
+RUST_LOG=nostube_transcode=debug cargo run
 ```
 
 ### Frontend (React/Vite in `frontend/`)
@@ -91,7 +91,7 @@ npm run lint
 
 The DVM startup flow:
 
-1. Generate an identity (saved to `~/.local/share/dvm-video/identity.key`)
+1. Generate an identity (saved to `~/.local/share/nostube-transcode/identity.key`)
 2. Read `OPERATOR_NPUB` env var (required, panics if missing/invalid)
 3. Connect to bootstrap relays
 4. Fetch remote config from Nostr (NIP-78) if it exists

@@ -127,7 +127,7 @@ cd frontend && npm ci && npm run build && cd ..
 cargo build --release
 
 # Run
-OPERATOR_NPUB=npub1... ./target/release/dvm-video-processing
+OPERATOR_NPUB=npub1... ./target/release/nostube-transcode
 ```
 
 ## Environment Variables
@@ -148,10 +148,10 @@ Check the DVM logs on startup:
 
 ```bash
 # Docker
-docker logs dvm-video-processing
+docker logs nostube-transcode
 
 # Native
-RUST_LOG=info ./target/release/dvm-video-processing
+RUST_LOG=info ./target/release/nostube-transcode
 ```
 
 Look for:

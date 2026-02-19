@@ -9,12 +9,12 @@
 # See docs/deployment.md for NVIDIA driver & container toolkit setup.
 
 services:
-  dvm-video:
+  nostube-transcode:
     image: ghcr.io/flox1an/nostube-transcode:latest-nvidia
     build:
       context: .
       dockerfile: Dockerfile.nvidia
-    container_name: dvm-video-processing
+    container_name: nostube-transcode
     restart: unless-stopped
 
     # NVIDIA GPU access - requires nvidia-container-toolkit

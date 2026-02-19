@@ -2,12 +2,12 @@
 //!
 //! Tests the interaction between identity, config, and admin modules.
 
-use dvm_video_processing::admin::commands::{
+use nostube_transcode::admin::commands::{
     parse_request, AdminCommand, AdminResponse, AdminResponseWire, ConfigData, ConfigResponse,
     ResponseData, StatusResponse,
 };
-use dvm_video_processing::bootstrap::{get_bootstrap_relays, DEFAULT_BOOTSTRAP_RELAYS};
-use dvm_video_processing::remote_config::RemoteConfig;
+use nostube_transcode::bootstrap::{get_bootstrap_relays, DEFAULT_BOOTSTRAP_RELAYS};
+use nostube_transcode::remote_config::RemoteConfig;
 
 /// Test config serialization roundtrip
 #[test]
