@@ -81,9 +81,7 @@ determine_version() {
 
 check_existing() {
   if [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
-    local current
-    current=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null || echo "unknown")
-    warn "Existing installation found (${current}). Upgrading to ${TAG}..."
+    warn "Existing installation found. Upgrading to ${TAG}..."
   fi
 }
 

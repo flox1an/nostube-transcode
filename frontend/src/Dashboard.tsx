@@ -29,8 +29,8 @@ export function Dashboard() {
       <div className="dashboard">
         <div className="login-screen">
           <IconNostube className="brand-icon big" />
-          <h1>Nostube</h1>
-          <p>The Nostr Video Data Vending Machine</p>
+          <h1>nostube transform</h1>
+          <p>Providing video transcoding for videos on NOSTR</p>
           <LoginDialog onLogin={() => setErrorMessage(null)} onError={setErrorMessage} />
           {errorMessage && <p className="error-message">{errorMessage}</p>}
         </div>
@@ -44,8 +44,8 @@ export function Dashboard() {
         <div className="header-brand">
           <IconNostube className="brand-icon" />
           <div className="brand-text">
-            <h1>Nostube</h1>
-            <span className="brand-subtitle">Nostr Video DVM</span>
+            <h1>nostube transform</h1>
+            <span className="brand-subtitle">Providing video transcoding for videos on NOSTR</span>
           </div>
         </div>
         <div className="user-info">
@@ -75,7 +75,7 @@ export function Dashboard() {
               <div className="no-selection">
                 <div className="no-selection-content">
                   <IconTv className="no-selection-icon" />
-                  <h2>Welcome to Nostube</h2>
+                  <h2>Welcome to nostube transform</h2>
                   <p>Select a DVM from the sidebar to manage it or submit a video for processing.</p>
                 </div>
               </div>
