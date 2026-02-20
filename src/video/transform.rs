@@ -381,7 +381,8 @@ impl VideoProcessor {
             transform_config.clone(),
             self.hwaccel,
             codec,
-        );
+        )
+        .with_source_codec(source_codec);
 
         if let Some(d) = duration {
             ffmpeg = ffmpeg.with_duration(d);
@@ -440,6 +441,7 @@ impl VideoProcessor {
         resolution: Resolution,
         quality: Option<u32>,
         codec: Codec,
+        source_codec: Option<&str>,
         progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
         duration: Option<f64>,
     ) -> Result<Mp4TransformResult, VideoError> {
@@ -448,6 +450,7 @@ impl VideoProcessor {
             resolution = %resolution.as_str(),
             hwaccel = %self.hwaccel,
             codec = %codec.as_str(),
+            source_codec = ?source_codec,
             "Starting MP4 video transformation"
         );
 
@@ -467,7 +470,8 @@ impl VideoProcessor {
             resolution,
             self.hwaccel,
             codec,
-        );
+        )
+        .with_source_codec(source_codec);
         if let Some(q) = quality {
             ffmpeg = ffmpeg.with_crf(q);
         }

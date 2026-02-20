@@ -493,7 +493,7 @@ impl AdminHandler {
         let start = Instant::now();
 
         let result = match processor
-            .transform_mp4(TEST_VIDEO_URL, resolution, Some(23), Codec::default(), None, None)
+            .transform_mp4(TEST_VIDEO_URL, resolution, Some(23), Codec::default(), None, None, None)
             .await
         {
             Ok(result) => result,

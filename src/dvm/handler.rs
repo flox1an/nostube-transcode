@@ -326,6 +326,13 @@ impl JobHandler {
                 // Create shared atomic counter for real-time progress tracking from FFmpeg
                 let progress_ms = Arc::new(AtomicU64::new(0));
 
+                // Get source codec for decoder hint
+                let source_codec = metadata
+                    .as_ref()
+                    .ok()
+                    .and_then(|m| m.video_stream())
+                    .and_then(|s| s.codec_name.clone());
+
                 // Transform with periodic progress updates
                 // Use quality 15 for good quality on VideoToolbox (maps to q:v 70)
                 let result = self
@@ -340,6 +347,7 @@ impl JobHandler {
                             job.resolution,
                             Some(15),
                             job.codec,
+                            source_codec.as_deref(),
                             Some(progress_ms),
                             Some(video_duration_secs),
                         ),

@@ -113,7 +113,7 @@ impl HwAccel {
     }
 
     /// Check if VAAPI is available (Linux)
-    /// This runs a quick FFmpeg probe to verify VAAPI HEVC encoding actually works.
+    /// This runs a quick FFmpeg probe to verify VAAPI HEVC encoding and AV1 decoding capabilities.
     #[cfg(target_os = "linux")]
     fn is_vaapi_available() -> bool {
         // First check for render device
@@ -126,10 +126,11 @@ impl HwAccel {
             return false;
         };
 
-        debug!(device = %device, "Found render device, testing VAAPI initialization");
+        debug!(device = %device, "Found render device, testing VAAPI capabilities");
 
-        // Run a quick FFmpeg test to verify VAAPI HEVC encoding works
-        let result = Command::new("ffmpeg")
+        // --- Test HEVC VAAPI encoding ---
+        // This probe verifies that FFmpeg can use the VAAPI device for HEVC encoding.
+        let hevc_result = Command::new("ffmpeg")
             .args([
                 "-hide_banner",
                 "-loglevel",
@@ -141,9 +142,9 @@ impl HwAccel {
                 "-f",
                 "lavfi",
                 "-i",
-                "nullsrc=s=64x64:d=0.1",
+                "nullsrc=s=64x64:d=0.1", // Dummy input source
                 "-vf",
-                "format=nv12,hwupload",
+                "format=nv12,hwupload", // Ensure frames are in VAAPI memory
                 "-c:v",
                 "hevc_vaapi",
                 "-frames:v",
@@ -154,25 +155,75 @@ impl HwAccel {
             ])
             .output();
 
-        match result {
+        let mut hevc_ok = false;
+        match hevc_result {
             Ok(output) if output.status.success() => {
-                info!(device = %device, "VAAPI hardware acceleration verified");
-                true
+                info!(device = %device, "VAAPI HEVC encoding verified");
+                hevc_ok = true;
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 debug!(
                     device = %device,
                     stderr = %stderr,
-                    "VAAPI probe failed"
+                    "VAAPI HEVC probe failed"
                 );
-                false
             }
             Err(e) => {
-                debug!(error = %e, "Failed to run FFmpeg VAAPI probe");
-                false
+                debug!(error = %e, "Failed to run FFmpeg VAAPI HEVC probe");
             }
         }
+
+        // --- Test AV1 VAAPI decoding ---
+        // This probe verifies that FFmpeg can use the VAAPI device for AV1 decoding.
+        // We use a dummy input and try to decode it using av1_vaapi.
+        let av1_result = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-init_hw_device",
+                &format!("vaapi=vaapi:{}", device),
+                "-filter_hw_device",
+                "vaapi",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=64x64:d=0.1", // Dummy input source
+                "-vf",
+                "format=nv12,hwupload", // Ensure frames are in VAAPI memory
+                "-c:v",
+                "av1_vaapi", // Explicitly request AV1 VAAPI decoder
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output();
+
+        let mut av1_ok = false;
+        match av1_result {
+            Ok(output) if output.status.success() => {
+                info!(device = %device, "VAAPI AV1 decoding verified");
+                av1_ok = true;
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    device = %device,
+                    stderr = %stderr,
+                    "VAAPI AV1 probe failed"
+                );
+            }
+            Err(e) => {
+                debug!(error = %e, "Failed to run FFmpeg VAAPI AV1 probe");
+            }
+        }
+
+        // VAAPI is considered available if either HEVC encoding OR AV1 decoding works.
+        // For N100, AV1 decoding is critical.
+        hevc_ok || av1_ok
     }
 
     /// Check if Intel QSV is available (Linux)

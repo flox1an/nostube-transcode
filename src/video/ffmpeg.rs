@@ -16,6 +16,8 @@ pub struct FfmpegCommand {
     config: TransformConfig,
     hwaccel: HwAccel,
     codec: Codec,
+    /// Source video codec hint (e.g. "av1")
+    source_codec: Option<String>,
     /// Path to HLS key info file for AES-128 encryption
     key_info_path: Option<PathBuf>,
     /// Video duration in seconds
@@ -36,9 +38,16 @@ impl FfmpegCommand {
             config,
             hwaccel,
             codec,
+            source_codec: None,
             key_info_path: None,
             duration: None,
         }
+    }
+
+    /// Set the source codec hint for explicit hardware decoder selection
+    pub fn with_source_codec(mut self, codec: Option<&str>) -> Self {
+        self.source_codec = codec.map(|s| s.to_string());
+        self
     }
 
     /// Set the video duration to ensure FFmpeg stops correctly
@@ -228,6 +237,14 @@ impl FfmpegCommand {
             if self.hwaccel == HwAccel::Vaapi {
                 // For VAAPI, we use the device name initialized in init_hw_device
                 cmd.arg("-hwaccel_device").arg("vaapi");
+
+                // Explicitly hint the hardware decoder if we know the source codec
+                if let Some(ref source) = self.source_codec {
+                    if source.to_lowercase() == "av1" {
+                        // Explicitly request AV1 VAAPI decoder
+                        cmd.arg("-c:v").arg("av1_vaapi");
+                    }
+                }
             } else if let Some(device) = self.hwaccel.qsv_device() {
                 // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
@@ -479,6 +496,8 @@ pub struct FfmpegMp4Command {
     audio_bitrate: String,
     hwaccel: HwAccel,
     codec: Codec,
+    /// Source video codec hint (e.g. "av1")
+    source_codec: Option<String>,
     duration: Option<f64>,
 }
 
@@ -498,8 +517,15 @@ impl FfmpegMp4Command {
             audio_bitrate: "128k".to_string(),
             hwaccel,
             codec,
+            source_codec: None,
             duration: None,
         }
+    }
+
+    /// Set the source codec hint for explicit hardware decoder selection
+    pub fn with_source_codec(mut self, codec: Option<&str>) -> Self {
+        self.source_codec = codec.map(|s| s.to_string());
+        self
     }
 
     /// Set the video duration to ensure FFmpeg stops correctly
@@ -651,6 +677,14 @@ impl FfmpegMp4Command {
             if self.hwaccel == HwAccel::Vaapi {
                 // For VAAPI, we use the device name initialized in init_hw_device
                 cmd.arg("-hwaccel_device").arg("vaapi");
+
+                // Explicitly hint the hardware decoder if we know the source codec
+                if let Some(ref source) = self.source_codec {
+                    if source.to_lowercase() == "av1" {
+                        // Explicitly request AV1 VAAPI decoder
+                        cmd.arg("-c:v").arg("av1_vaapi");
+                    }
+                }
             } else if let Some(device) = self.hwaccel.qsv_device() {
                 // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
