@@ -19,24 +19,64 @@ pub enum IdentityError {
 
 /// Returns the default data directory for the DVM.
 ///
-/// - Linux/macOS: `~/.local/share/nostube-transcode/`
-/// - Respects `DATA_DIR` environment variable if set
+/// Uses XDG Base Directory convention on all platforms:
+/// - `$DATA_DIR` if set (override)
+/// - `$XDG_DATA_HOME/nostube-transcode` if set
+/// - `~/.local/share/nostube-transcode` otherwise
+///
+/// Automatically migrates from legacy paths:
+/// - `~/.local/share/dvm-video` (old project name)
+/// - `~/Library/Application Support/nostube-transcode` (old macOS path)
 pub fn default_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("DATA_DIR") {
         return PathBuf::from(dir);
     }
 
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".local")
+                .join("share")
+        });
 
-    // Migrate old data directory if it exists
-    let old_dir = base.join("dvm-video");
     let new_dir = base.join("nostube-transcode");
-    if old_dir.exists() && !new_dir.exists() {
-        if let Err(e) = std::fs::rename(&old_dir, &new_dir) {
-            tracing::warn!("Failed to migrate data dir from {:?} to {:?}: {}", old_dir, new_dir, e);
-            return old_dir;
+
+    if !new_dir.exists() {
+        // Migrate from old project name (dvm-video)
+        let old_name_dir = base.join("dvm-video");
+        if old_name_dir.exists() {
+            if let Some(parent) = new_dir.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::rename(&old_name_dir, &new_dir) {
+                tracing::warn!("Failed to migrate data dir from {:?} to {:?}: {}", old_name_dir, new_dir, e);
+                return old_name_dir;
+            }
+            tracing::info!("Migrated data directory from {:?} to {:?}", old_name_dir, new_dir);
+            return new_dir;
         }
-        tracing::info!("Migrated data directory from {:?} to {:?}", old_dir, new_dir);
+
+        // Migrate from macOS-native path (~/Library/Application Support/)
+        if let Some(macos_base) = dirs::data_local_dir() {
+            if macos_base != base {
+                let macos_dir = macos_base.join("nostube-transcode");
+                if macos_dir.exists() {
+                    if let Some(parent) = new_dir.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::rename(&macos_dir, &new_dir) {
+                        tracing::warn!(
+                            "Failed to migrate from {:?} to {:?}: {}",
+                            macos_dir, new_dir, e
+                        );
+                        return macos_dir;
+                    }
+                    tracing::info!("Migrated data directory from {:?} to {:?}", macos_dir, new_dir);
+                }
+            }
+        }
     }
 
     new_dir

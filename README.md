@@ -52,6 +52,18 @@ All other configuration (relays, Blossom servers, profile) is managed remotely v
 
 See [docs/deployment.md](docs/deployment.md) for the full list of optional environment variables.
 
+### File Locations
+
+The DVM follows the [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) convention on all platforms:
+
+| Path | Purpose | Override |
+|---|---|---|
+| `~/.local/share/nostube-transcode/identity.key` | DVM keypair (auto-generated) | `DATA_DIR` |
+| `~/.local/share/nostube-transcode/env` | Environment config (created by installer) | - |
+| `~/.cache/nostube-transcode/` | Temporary ffmpeg working files (auto-cleaned) | `TEMP_DIR` |
+
+Docker deployments use `TEMP_DIR=/app/temp` and can mount the identity key via Docker secrets.
+
 ## Features
 
 - Multi-resolution adaptive HLS (240p through 4K)

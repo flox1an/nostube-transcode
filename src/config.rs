@@ -43,7 +43,16 @@ impl Config {
 
         let temp_dir = std::env::var("TEMP_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("./temp"));
+            .unwrap_or_else(|_| {
+                std::env::var("XDG_CACHE_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| PathBuf::from("."))
+                            .join(".cache")
+                    })
+                    .join("nostube-transcode")
+            });
 
         let http_port = std::env::var("HTTP_PORT")
             .ok()
