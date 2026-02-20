@@ -532,10 +532,11 @@ impl JobHandler {
             loop {
                 ticker.tick().await;
                 let elapsed_secs = start.elapsed().as_secs();
-                let actual_ms = progress_ms.load(Ordering::Relaxed);
-                let actual_secs = actual_ms as f64 / 1000.0;
+                let actual_us = progress_ms.load(Ordering::Relaxed);
+                // FFmpeg's out_time_ms is actually in microseconds despite the name
+                let actual_secs = actual_us as f64 / 1_000_000.0;
 
-                let (progress_msg, remaining_secs, progress_pct) = if actual_ms > 0 && total_duration_secs > 0.0 {
+                let (progress_msg, remaining_secs, progress_pct) = if actual_us > 0 && total_duration_secs > 0.0 {
                     // Use real-time progress from FFmpeg if available
                     let pct = ((actual_secs / total_duration_secs) * 100.0).min(99.0) as u32;
                     let speed = if elapsed_secs > 0 { actual_secs / elapsed_secs as f64 } else { 0.0 };
