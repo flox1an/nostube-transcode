@@ -26,6 +26,9 @@ pub const DVM_SERVICE_ID: &str = "video-transform-hls";
 /// Default DVM name if not configured
 const DEFAULT_DVM_NAME: &str = "Video Transform DVM";
 
+/// Profile picture URL (hosted on the frontend deployment)
+const PROFILE_PICTURE_URL: &str = "https://nostube-transform.vercel.app/logo.png";
+
 /// Builds a NIP-89 DVM announcement event
 pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuilder {
     let relays: Vec<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
@@ -121,6 +124,41 @@ pub fn build_relay_list_event(config: &Config) -> EventBuilder {
     EventBuilder::new(RELAY_LIST_KIND, "", tags)
 }
 
+/// Builds a kind 0 metadata event for the DVM's Nostr profile.
+pub fn build_metadata_event(config: &Config, hwaccel: HwAccel) -> EventBuilder {
+    let name = config
+        .dvm_name
+        .clone()
+        .unwrap_or_else(|| DEFAULT_DVM_NAME.to_string());
+
+    let about = config.dvm_about.clone().unwrap_or_else(|| {
+        format!(
+            "Video transformation DVM - converts videos to HLS streaming format. \
+             Supports 360p, 720p, 1080p, and 4K. Hardware acceleration: {}.",
+            hwaccel
+        )
+    });
+
+    let mut metadata = Metadata::new()
+        .display_name(&name)
+        .name(name.to_lowercase().replace(' ', "-"))
+        .about(&about);
+
+    if let Ok(url) = Url::parse(PROFILE_PICTURE_URL) {
+        metadata = metadata.picture(url);
+    }
+
+    EventBuilder::metadata(&metadata)
+}
+
+/// Builds a kind 3 contact list event that follows the operator.
+pub fn build_contact_list_event(config: &Config) -> Option<EventBuilder> {
+    let admin = config.admin_pubkey.as_ref()?;
+    let pubkey = PublicKey::parse(admin).ok()?;
+    let contact = Contact::new(pubkey, None, None::<String>);
+    Some(EventBuilder::contact_list([contact]))
+}
+
 /// Manages periodic DVM announcement publishing.
 ///
 /// Republishes whenever the config changes (via admin commands)
@@ -159,10 +197,14 @@ impl AnnouncementPublisher {
         // Give relays a few seconds to connect before the first announcement
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Initial publish: announcement + relay list
+        // Initial publish: announcement + relay list + profile + contact list
         let config = self.current_snapshot().await;
         self.publish_announcement(&config).await;
+        self.publish_metadata(&config).await;
+        self.publish_contact_list(&config).await;
         let mut last_relays = self.publish_relay_list(&config).await;
+        let mut last_profile = (config.dvm_name.clone(), config.dvm_about.clone());
+        let mut last_admin = config.admin_pubkey.clone();
 
         // Then publish every hour or when config changes
         let mut ticker = interval(Duration::from_secs(3600));
@@ -178,6 +220,21 @@ impl AnnouncementPublisher {
                     info!("Config changed, republishing announcement");
                     let config = self.current_snapshot().await;
                     self.publish_announcement(&config).await;
+
+                    // Republish profile (kind 0) if name or about changed
+                    let current_profile = (config.dvm_name.clone(), config.dvm_about.clone());
+                    if current_profile != last_profile {
+                        info!("Profile changed, republishing metadata");
+                        self.publish_metadata(&config).await;
+                        last_profile = current_profile;
+                    }
+
+                    // Republish contact list if admin changed
+                    if config.admin_pubkey != last_admin {
+                        info!("Admin changed, republishing contact list");
+                        self.publish_contact_list(&config).await;
+                        last_admin = config.admin_pubkey.clone();
+                    }
 
                     // Only republish relay list if relays actually changed
                     let current_relays: HashSet<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
@@ -291,6 +348,52 @@ impl AnnouncementPublisher {
 
         published_relays
     }
+
+    /// Publish kind 0 metadata (Nostr profile) for the DVM.
+    async fn publish_metadata(&self, config: &Config) {
+        let name = config
+            .dvm_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_DVM_NAME.to_string());
+
+        info!(
+            name = %name,
+            "Publishing DVM profile metadata (kind 0)"
+        );
+
+        let event = build_metadata_event(config, self.hwaccel);
+
+        match self.publisher.publish(event).await {
+            Ok(_) => {
+                info!(
+                    pubkey = %config.nostr_keys.public_key(),
+                    "DVM profile metadata published"
+                );
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to publish DVM profile metadata");
+            }
+        }
+    }
+
+    /// Publish kind 3 contact list (auto-follow operator).
+    async fn publish_contact_list(&self, config: &Config) {
+        let event = match build_contact_list_event(config) {
+            Some(e) => e,
+            None => return,
+        };
+
+        info!("Publishing contact list (following operator)");
+
+        match self.publisher.publish(event).await {
+            Ok(_) => {
+                info!("Contact list published (following operator)");
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to publish contact list");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -378,5 +481,85 @@ mod tests {
         });
 
         assert!(admin_tag.is_none(), "Admin tag should not be present when no admin is configured");
+    }
+
+    #[test]
+    fn test_metadata_event() {
+        let keys = Keys::generate();
+
+        let config = Config {
+            nostr_keys: keys.clone(),
+            nostr_relays: vec![],
+            blossom_servers: vec![],
+            blob_expiration_days: 30,
+            temp_dir: PathBuf::from("/tmp"),
+            ffmpeg_path: PathBuf::from("ffmpeg"),
+            ffprobe_path: PathBuf::from("ffprobe"),
+            http_port: 3000,
+            http_enabled: true,
+            dvm_name: Some("My DVM".to_string()),
+            dvm_about: Some("Transcodes videos".to_string()),
+            admin_pubkey: None,
+        };
+
+        let event_builder = build_metadata_event(&config, HwAccel::Software);
+        let event = event_builder.to_event(&keys).unwrap();
+
+        assert_eq!(event.kind, Kind::Metadata);
+        let metadata: serde_json::Value = serde_json::from_str(&event.content).unwrap();
+        assert_eq!(metadata["display_name"], "My DVM");
+        assert_eq!(metadata["about"], "Transcodes videos");
+        assert_eq!(metadata["picture"], PROFILE_PICTURE_URL);
+    }
+
+    #[test]
+    fn test_contact_list_with_admin() {
+        let keys = Keys::generate();
+        let admin_pubkey = "b7c6f6915cfa9a62fff6a1f02604de88c23c6c6c6d1b8f62c7cc10749f307e81";
+
+        let config = Config {
+            nostr_keys: keys.clone(),
+            nostr_relays: vec![],
+            blossom_servers: vec![],
+            blob_expiration_days: 30,
+            temp_dir: PathBuf::from("/tmp"),
+            ffmpeg_path: PathBuf::from("ffmpeg"),
+            ffprobe_path: PathBuf::from("ffprobe"),
+            http_port: 3000,
+            http_enabled: true,
+            dvm_name: None,
+            dvm_about: None,
+            admin_pubkey: Some(admin_pubkey.to_string()),
+        };
+
+        let builder = build_contact_list_event(&config).expect("Should build contact list");
+        let event = builder.to_event(&keys).unwrap();
+
+        assert_eq!(event.kind, Kind::ContactList);
+        let p_tag = event.tags.iter().find(|tag| {
+            tag.as_slice().first().map(|s| s.as_str()) == Some("p")
+        });
+        assert!(p_tag.is_some(), "Should have p tag for operator");
+        assert_eq!(p_tag.unwrap().as_slice().get(1).unwrap(), admin_pubkey);
+    }
+
+    #[test]
+    fn test_contact_list_without_admin() {
+        let config = Config {
+            nostr_keys: Keys::generate(),
+            nostr_relays: vec![],
+            blossom_servers: vec![],
+            blob_expiration_days: 30,
+            temp_dir: PathBuf::from("/tmp"),
+            ffmpeg_path: PathBuf::from("ffmpeg"),
+            ffprobe_path: PathBuf::from("ffprobe"),
+            http_port: 3000,
+            http_enabled: true,
+            dvm_name: None,
+            dvm_about: None,
+            admin_pubkey: None,
+        };
+
+        assert!(build_contact_list_event(&config).is_none());
     }
 }
