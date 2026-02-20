@@ -123,7 +123,7 @@ Required:
 
 Optional (runtime configuration is managed via remote config NIP-78):
 - `BOOTSTRAP_RELAYS` - Comma-separated bootstrap relays (default: wss://nos.lol,wss://relay.damus.io,wss://relay.nostu.be,wss://relay.snort.social)
-- `HTTP_PORT` - Default 3000
+- `HTTP_PORT` - Default 5207
 - `DISABLE_HTTP` - Set to `1` or `true` to disable the embedded web server
 - `TEMP_DIR` - Default ./temp
 - `FFMPEG_PATH` / `FFPROBE_PATH` - Default uses system PATH

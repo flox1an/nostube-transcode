@@ -4,7 +4,7 @@
 # Quick start:
 #   1. cp .env.example .env && edit .env (set OPERATOR_NPUB)
 #   2. docker compose -f docker-compose.nvidia.yml up -d
-#   3. Open http://localhost:3000 to manage via the admin UI
+#   3. Open http://localhost:5207 to manage via the admin UI
 #
 # See docs/deployment.md for NVIDIA driver & container toolkit setup.
 
@@ -27,7 +27,7 @@ services:
               capabilities: [gpu, video, compute]
 
     ports:
-      - "3000:3000"
+      - "5207:5207"
 
     volumes:
       # Persistent temp directory (optional, for debugging)
@@ -40,5 +40,5 @@ services:
       # NVIDIA runtime
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-      - HTTP_PORT=3000
+      - HTTP_PORT=5207
       - TEMP_DIR=/app/temp

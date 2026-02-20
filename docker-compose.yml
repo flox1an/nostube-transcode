@@ -3,7 +3,7 @@
 # Quick start:
 #   1. cp .env.example .env && edit .env (set OPERATOR_NPUB)
 #   2. docker compose up -d
-#   3. Open http://localhost:3000 to manage via the admin UI
+#   3. Open http://localhost:5207 to manage via the admin UI
 #
 # See docs/deployment.md for Intel GPU setup and group ID configuration.
 
@@ -25,7 +25,7 @@ services:
       - "105"  # render group (from your host - check with: stat /dev/dri/renderD128)
 
     ports:
-      - "3000:3000"
+      - "5207:5207"
 
     volumes:
       # Persistent temp directory (optional, for debugging)
@@ -37,5 +37,5 @@ services:
     environment:
       # Intel QSV - Use Intel Media Driver for AV1/HEVC hardware decode
       - LIBVA_DRIVER_NAME=iHD
-      - HTTP_PORT=3000
+      - HTTP_PORT=5207
       - TEMP_DIR=/app/temp

@@ -57,7 +57,7 @@ impl Config {
         let http_port = std::env::var("HTTP_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(3000);
+            .unwrap_or(5207);
 
         let http_enabled = std::env::var("DISABLE_HTTP")
             .map(|v| v != "1" && v.to_lowercase() != "true")

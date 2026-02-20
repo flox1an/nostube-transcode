@@ -192,7 +192,7 @@ start_dvm() {
   bold "Ready to start the DVM."
   echo "  GPU:          ${GPU_TYPE}"
   echo "  Compose file: ${COMPOSE_FILE}"
-  echo "  Admin UI:     http://localhost:3000"
+  echo "  Admin UI:     http://localhost:5207"
   echo ""
 
   read -rp "Start now? [Y/n] " yn
@@ -209,7 +209,7 @@ start_dvm() {
   docker compose -f "$COMPOSE_FILE" up -d
 
   echo ""
-  info "DVM is starting. Open http://localhost:3000 to manage it."
+  info "DVM is starting. Open http://localhost:5207 to manage it."
   echo ""
   echo "  View logs:  docker logs -f nostube-transcode"
   echo "  Stop:       docker compose -f ${COMPOSE_FILE} down"

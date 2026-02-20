@@ -136,7 +136,7 @@ OPERATOR_NPUB=npub1... ./target/release/nostube-transcode
 |---|---|---|---|
 | `OPERATOR_NPUB` | Yes | -- | Nostr pubkey (npub or hex) of the operator/admin |
 | `BOOTSTRAP_RELAYS` | No | `wss://relay.damus.io,wss://nos.lol` | Comma-separated bootstrap relays |
-| `HTTP_PORT` | No | `3000` | Port for the admin web UI |
+| `HTTP_PORT` | No | `5207` | Port for the admin web UI |
 | `TEMP_DIR` | No | `./temp` | Directory for temporary video files |
 | `RUST_LOG` | No | `info` | Log level (`debug`, `info`, `warn`, `error`) |
 | `FFMPEG_PATH` | No | System PATH | Path to ffmpeg binary |

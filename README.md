@@ -36,7 +36,7 @@ cp .env.example .env
 NVIDIA GPU: `docker compose -f docker-compose.nvidia.yml up -d`
 Intel GPU / CPU: `docker compose up -d`
 
-Open `http://localhost:3000` to manage your DVM.
+Open `http://localhost:5207` to manage your DVM.
 
 > NVIDIA users need the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on the host. See [docs/deployment.md](docs/deployment.md) for full setup instructions.
 

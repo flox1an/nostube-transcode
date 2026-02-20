@@ -102,12 +102,12 @@ USER dvm
 # Environment defaults
 ENV RUST_LOG=info
 ENV TEMP_DIR=/app/temp
-ENV HTTP_PORT=3000
+ENV HTTP_PORT=5207
 
-EXPOSE 3000
+EXPOSE 5207
 
 # Healthcheck (simple TCP check since no /health endpoint)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:3000/ || exit 1
+    CMD curl -sf http://localhost:5207/ || exit 1
 
 CMD ["nostube-transcode"]
