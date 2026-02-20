@@ -194,13 +194,19 @@ setup_operator_npub() {
   info "Wrote OPERATOR_NPUB to ${ENV_FILE}"
 }
 
-# --- Systemd service (Linux only) ---
+# --- Daemon setup (systemd on Linux, launchd on macOS) ---
 
-setup_systemd() {
+setup_daemon() {
   local os
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  [ "$os" = "linux" ] || return 0
 
+  case "${os}" in
+    linux)  setup_systemd ;;
+    darwin) setup_launchd ;;
+  esac
+}
+
+setup_systemd() {
   local service_dir="${HOME}/.config/systemd/user"
   local service_file="${service_dir}/nostube-transcode.service"
 
@@ -224,6 +230,48 @@ WantedBy=default.target
 EOF
 
   info "Wrote systemd user service to ${service_file}"
+}
+
+setup_launchd() {
+  local plist_dir="${HOME}/Library/LaunchAgents"
+  local plist_file="${plist_dir}/com.nostube.transcode.plist"
+
+  mkdir -p "$plist_dir"
+
+  cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nostube.transcode</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${INSTALL_DIR}/${BINARY_NAME}</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${INSTALL_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.local/share/nostube-transcode/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.local/share/nostube-transcode/stderr.log</string>
+</dict>
+</plist>
+EOF
+
+  info "Wrote launchd plist to ${plist_file}"
 }
 
 # --- Summary ---
@@ -250,7 +298,18 @@ print_summary() {
   fi
 
   if [ "$os" = "linux" ]; then
-    echo "  Systemd:  systemctl --user enable --now nostube-transcode"
+    echo "  Run as daemon:"
+    echo "    systemctl --user enable --now nostube-transcode"
+    echo ""
+  elif [ "$os" = "darwin" ]; then
+    echo "  Run as daemon:"
+    echo "    launchctl load ~/Library/LaunchAgents/com.nostube.transcode.plist"
+    echo ""
+    echo "  Stop daemon:"
+    echo "    launchctl unload ~/Library/LaunchAgents/com.nostube.transcode.plist"
+    echo ""
+    echo "  Logs:"
+    echo "    tail -f ~/.local/share/nostube-transcode/stderr.log"
     echo ""
   fi
 }
@@ -268,7 +327,7 @@ main() {
   download_and_install
   check_ffmpeg
   setup_operator_npub
-  setup_systemd
+  setup_daemon
   print_summary
 }
 

@@ -64,6 +64,43 @@ The DVM follows the [XDG Base Directory](https://specifications.freedesktop.org/
 
 Docker deployments use `TEMP_DIR=/app/temp` and can mount the identity key via Docker secrets.
 
+## Running as a Daemon
+
+The installer generates a daemon config for your platform. Enable it to start the DVM automatically on boot and restart on failure.
+
+### Linux (systemd)
+
+```bash
+systemctl --user enable --now nostube-transcode
+```
+
+```bash
+# Check status / logs
+systemctl --user status nostube-transcode
+journalctl --user -u nostube-transcode -f
+```
+
+```bash
+# Stop and disable
+systemctl --user disable --now nostube-transcode
+```
+
+### macOS (launchd)
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.nostube.transcode.plist
+```
+
+```bash
+# Check logs
+tail -f ~/.local/share/nostube-transcode/stderr.log
+```
+
+```bash
+# Stop
+launchctl unload ~/Library/LaunchAgents/com.nostube.transcode.plist
+```
+
 ## Features
 
 - Multi-resolution adaptive HLS (240p through 4K)
