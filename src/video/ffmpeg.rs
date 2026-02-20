@@ -241,14 +241,23 @@ impl FfmpegCommand {
 
                 // Explicitly hint the hardware decoder if we know the source codec
                 if let Some(ref source) = self.source_codec {
-                    if source.to_lowercase() == "av1" {
-                        // Explicitly request AV1 VAAPI decoder
-                        cmd.arg("-c:v").arg("av1_vaapi");
+                    let codec = Codec::from_str(source);
+                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
+                        // Explicitly request hardware decoder (e.g. av1_qsv)
+                        cmd.arg("-c:v").arg(decoder);
                     }
                 }
             } else if let Some(device) = self.hwaccel.qsv_device() {
                 // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
+
+                // Explicitly hint the hardware decoder if we know the source codec
+                if let Some(ref source) = self.source_codec {
+                    let codec = Codec::from_str(source);
+                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
+                        cmd.arg("-c:v").arg(decoder);
+                    }
+                }
             }
 
             // Keep frames in hardware memory
@@ -682,14 +691,23 @@ impl FfmpegMp4Command {
 
                 // Explicitly hint the hardware decoder if we know the source codec
                 if let Some(ref source) = self.source_codec {
-                    if source.to_lowercase() == "av1" {
-                        // Explicitly request AV1 VAAPI decoder
-                        cmd.arg("-c:v").arg("av1_vaapi");
+                    let codec = Codec::from_str(source);
+                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
+                        // Explicitly request hardware decoder (e.g. av1_qsv)
+                        cmd.arg("-c:v").arg(decoder);
                     }
                 }
             } else if let Some(device) = self.hwaccel.qsv_device() {
                 // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
+
+                // Explicitly hint the hardware decoder if we know the source codec
+                if let Some(ref source) = self.source_codec {
+                    let codec = Codec::from_str(source);
+                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
+                        cmd.arg("-c:v").arg(decoder);
+                    }
+                }
             }
 
             // Keep frames in hardware memory

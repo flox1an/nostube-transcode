@@ -307,6 +307,7 @@ impl JobHandler {
                 let codec_name = match job.codec {
                     Codec::H264 => "H.264",
                     Codec::H265 => "H.265",
+                    Codec::AV1 => "AV1", // Added AV1 support
                 };
                 let status_msg = format!(
                     "Transcoding to {} {} MP4",
@@ -394,6 +395,7 @@ impl JobHandler {
                 let mimetype = match job.codec {
                     Codec::H264 => "video/mp4; codecs=\"avc1.64001f,mp4a.40.2\"",
                     Codec::H265 => "video/mp4; codecs=\"hvc1,mp4a.40.2\"",
+                    Codec::AV1 => "video/mp4; codecs=\"av01.0.05M.08,opus\"", // Common AV1 MP4 mimetype (profile 0, level 5.0, Main)
                 };
 
                 Ok(DvmResult::Mp4(Mp4Result {
@@ -429,6 +431,7 @@ impl JobHandler {
                 let codec_name = match job.codec {
                     Codec::H264 => "H.264",
                     Codec::H265 => "H.265",
+                    Codec::AV1 => "AV1", // Added AV1 support
                 };
                 let status_msg = format!(
                     "Transcoding to {} HLS ({})",

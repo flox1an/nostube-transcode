@@ -174,20 +174,20 @@ impl HwAccel {
             }
         }
 
-        // --- Test AV1 VAAPI decoding ---
+        // --- Test AV1 hardware decoding via VAAPI ---
         // This probe verifies that FFmpeg can use the VAAPI device for AV1 decoding.
-        // We use a dummy input and try to decode it using av1_vaapi.
+        // We use a dummy input and try to decode it using the hardware-accelerated 'av1' decoder.
         let av1_result = Command::new("ffmpeg")
             .args([
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                "-hwaccel",
+                "vaapi",
                 "-init_hw_device",
                 &format!("vaapi=vaapi:{}", device),
                 "-filter_hw_device",
                 "vaapi",
-                "-c:v",
-                "av1_vaapi", // Decoder hint MUST come before -i
                 "-f",
                 "lavfi",
                 "-i",
@@ -275,22 +275,58 @@ impl HwAccel {
 
         match result {
             Ok(output) if output.status.success() => {
-                info!(device = %device, "QSV hardware acceleration verified");
+                info!(device = %device, "QSV HEVC encoding verified");
                 true
             }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!(
-                    device = %device,
-                    stderr = %stderr,
-                    "QSV probe failed, falling back to software encoding"
-                );
-                false
+            Ok(_) => {
+                // If HEVC encoding fails, check if AV1 decoding works at least
+                Self::is_qsv_av1_available()
             }
             Err(e) => {
-                debug!(error = %e, "Failed to run FFmpeg QSV probe");
+                debug!(error = %e, "Failed to run FFmpeg QSV HEVC probe");
                 false
             }
+        }
+    }
+
+    /// Check if AV1 QSV decoding is available
+    #[cfg(target_os = "linux")]
+    fn is_qsv_av1_available() -> bool {
+        let render_devices = ["/dev/dri/renderD128", "/dev/dri/renderD129"];
+        let device = render_devices.iter().find(|d| Path::new(*d).exists());
+        let Some(device) = device else { return false; };
+
+        let result = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-init_hw_device",
+                &format!("qsv=qsv:hw_any,child_device={}", device),
+                "-filter_hw_device",
+                "qsv",
+                "-c:v",
+                "av1_qsv", // Test explicit AV1 QSV decoder
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=64x64:d=0.1",
+                "-vf",
+                "format=nv12,hwupload=extra_hw_frames=64",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                info!(device = %device, "QSV AV1 decoding verified");
+                true
+            }
+            _ => false,
         }
     }
 
@@ -331,14 +367,29 @@ impl HwAccel {
         match (self, codec) {
             (Self::Nvenc, Codec::H264) => "h264_nvenc",
             (Self::Nvenc, Codec::H265) => "hevc_nvenc",
+            (Self::Nvenc, Codec::AV1) => "av1_nvenc",
             (Self::Vaapi, Codec::H264) => "h264_vaapi",
             (Self::Vaapi, Codec::H265) => "hevc_vaapi",
+            (Self::Vaapi, Codec::AV1) => "av1_vaapi",
             (Self::Qsv, Codec::H264) => "h264_qsv",
             (Self::Qsv, Codec::H265) => "hevc_qsv",
+            (Self::Qsv, Codec::AV1) => "av1_qsv",
             (Self::VideoToolbox, Codec::H264) => "h264_videotoolbox",
             (Self::VideoToolbox, Codec::H265) => "hevc_videotoolbox",
             (Self::Software, Codec::H264) => "libx264",
             (Self::Software, Codec::H265) => "libx265",
+            (Self::Software, Codec::AV1) => "libsvtav1",
+            (Self::VideoToolbox, Codec::AV1) => "av1_videotoolbox", // macOS VideoToolbox does not support AV1 encoding
+        }
+    }
+
+    /// Get the video decoder name for this acceleration and codec (if any)
+    pub fn video_decoder(&self, codec: Codec) -> Option<&'static str> {
+        match (self, codec) {
+            (Self::Nvenc, Codec::AV1) => Some("av1_cuvid"),
+            (Self::Vaapi, Codec::AV1) => Some("av1"), // Standard VAAPI decoder
+            (Self::Qsv, Codec::AV1) => Some("av1_qsv"),
+            _ => None,
         }
     }
 

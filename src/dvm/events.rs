@@ -38,12 +38,14 @@ pub enum Codec {
     #[default]
     H264,
     H265,
+    AV1,
 }
 
 impl Codec {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "h265" | "hevc" => Self::H265,
+            "av1" => Self::AV1,
             _ => Self::H264,
         }
     }
@@ -52,6 +54,7 @@ impl Codec {
         match self {
             Self::H264 => "h264",
             Self::H265 => "h265",
+            Self::AV1 => "av1",
         }
     }
 }
