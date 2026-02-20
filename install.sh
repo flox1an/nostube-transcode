@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO="flox1an/nostube-transcode"
 BINARY_NAME="nostube-transcode"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="${HOME}/.local/bin"
 DATA_DIR="${HOME}/.local/share/nostube-transcode"
 ENV_FILE="${DATA_DIR}/env"
 
@@ -105,8 +105,9 @@ download_and_install() {
   info "Extracting..."
   tar -xzf "${tmpdir}/${archive}" -C "$tmpdir"
 
+  mkdir -p "${INSTALL_DIR}"
   info "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
-  sudo install -m 755 "${tmpdir}/nostube-transcode" "${INSTALL_DIR}/${BINARY_NAME}"
+  install -m 755 "${tmpdir}/nostube-transcode" "${INSTALL_DIR}/${BINARY_NAME}"
 
   info "Installed ${BINARY_NAME} ${TAG}"
 }
@@ -240,6 +241,13 @@ print_summary() {
   echo "  To start:   ${BINARY_NAME}"
   echo "  To upgrade:  re-run this install script"
   echo ""
+
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "${INSTALL_DIR}"; then
+    warn "${INSTALL_DIR} is not in your PATH."
+    echo "  Add it to your shell profile:"
+    echo "    echo 'export PATH=\"\${HOME}/.local/bin:\${PATH}\"' >> ~/.bashrc"
+    echo ""
+  fi
 
   if [ "$os" = "linux" ]; then
     echo "  Systemd:  systemctl --user enable --now nostube-transcode"
