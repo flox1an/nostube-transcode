@@ -502,7 +502,7 @@ impl HwAccel {
             }
             Self::Qsv => {
                 let device = self.qsv_device().unwrap_or("/dev/dri/renderD128");
-                Some(format!("qsv=qsv:hw_any,child_device={}", device))
+                Some(format!("qsv=hw_qsv:hw_any,child_device={}", device))
             }
             _ => None,
         }
@@ -514,7 +514,7 @@ impl HwAccel {
         match self {
             Self::Nvenc => Some("cuda"),
             Self::Vaapi => Some("vaapi"),
-            Self::Qsv => Some("qsv"),
+            Self::Qsv => Some("hw_qsv"),
             _ => None,
         }
     }

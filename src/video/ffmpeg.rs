@@ -308,6 +308,13 @@ impl FfmpegCommand {
                 non_original.len(),
                 output_labels.join("")
             )
+        } else if self.hwaccel == HwAccel::Qsv {
+            // For QSV, use hwmap to keep frames in QSV context for filtering
+            format!(
+                "[0:v]hwmap=derive_device=qsv,format=qsv,split={}{}",
+                non_original.len(),
+                output_labels.join("")
+            )
         } else if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
                 // Upload frames to hardware memory before splitting/scaling
@@ -603,15 +610,18 @@ impl FfmpegMp4Command {
         let vf = if self.hwaccel == HwAccel::Vaapi {
             // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
             // and use hwupload to ensure they are in VAAPI memory before scaling.
-            format!("format=nv12|vaapi,hwupload=extra_hw_frames=64,{}=w=-2:h={}", scale_filter, height)
+            format!("format=nv12|vaapi,hwupload=extra_hw_frames=64,{}=w=-1:h={}", scale_filter, height)
+        } else if self.hwaccel == HwAccel::Qsv {
+            // For QSV, use hwmap to keep frames in QSV context for filtering
+            format!("hwmap=derive_device=qsv,scale_qsv=w=-1:h={}", height)
         } else if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
-                format!("{},{}=w=-2:h={}", upload_filter, scale_filter, height)
+                format!("{},{}=w=-1:h={}", upload_filter, scale_filter, height)
             } else {
-                format!("{}=w=-2:h={}", scale_filter, height)
+                format!("{}=w=-1:h={}", scale_filter, height)
             }
         } else {
-            format!("{}=w=-2:h={}", scale_filter, height)
+            format!("{}=w=-1:h={}", scale_filter, height)
         };
         cmd.arg("-vf").arg(vf);
 
