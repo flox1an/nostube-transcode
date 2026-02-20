@@ -165,8 +165,8 @@ setup_operator_npub() {
     fi
   fi
 
-  # Non-interactive (piped) mode — just warn
-  if [ ! -t 0 ]; then
+  # Check if we can prompt the user (works even when piped via curl | bash)
+  if [ ! -t 0 ] && [ ! -e /dev/tty ]; then
     warn "OPERATOR_NPUB not configured."
     echo "  Edit ${ENV_FILE} and add your npub:"
     echo "  echo 'OPERATOR_NPUB=npub1yourkey...' > ${ENV_FILE}"
@@ -179,7 +179,7 @@ setup_operator_npub() {
   echo ""
 
   while true; do
-    read -rp "Enter your OPERATOR_NPUB (npub1... or hex): " npub
+    read -rp "Enter your OPERATOR_NPUB (npub1... or hex): " npub < /dev/tty
     if [ -z "$npub" ]; then
       error "OPERATOR_NPUB is required. The DVM cannot start without it."
       continue

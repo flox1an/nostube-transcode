@@ -7,7 +7,7 @@ use nostr_sdk::Url;
 /// Default bootstrap relays used when no configuration is available
 pub const DEFAULT_BOOTSTRAP_RELAYS: &[&str] = &[
     "wss://nos.lol",
-    "wss://relay.primal.net",
+    "wss://relay.damus.io",
     "wss://relay.nostu.be",
     "wss://relay.snort.social",
 ];

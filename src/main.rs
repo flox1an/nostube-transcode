@@ -47,15 +47,20 @@ async fn main() -> anyhow::Result<()> {
     // Create config change notifier (shared between admin handler and announcement publisher)
     let config_notify = Arc::new(Notify::new());
 
-    // Spawn web server immediately
-    let web_handle = tokio::spawn({
-        let config = startup.config.clone();
-        async move {
-            if let Err(e) = run_server(config).await {
-                tracing::error!("Web server error: {}", e);
+    // Spawn web server if enabled
+    let web_handle = if startup.config.http_enabled {
+        Some(tokio::spawn({
+            let config = startup.config.clone();
+            async move {
+                if let Err(e) = run_server(config).await {
+                    tracing::error!("Web server error: {}", e);
+                }
             }
-        }
-    });
+        }))
+    } else {
+        info!("HTTP server disabled (DISABLE_HTTP is set)");
+        None
+    };
 
     // Spawn admin listener
     let admin_handle = tokio::spawn({
@@ -134,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     shutdown_signal().await;
 
     info!("Shutting down...");
-    web_handle.abort();
+    if let Some(h) = web_handle { h.abort(); }
     admin_handle.abort();
     announcement_handle.abort();
     subscription_handle.abort();

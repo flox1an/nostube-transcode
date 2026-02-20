@@ -1,4 +1,5 @@
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tokio::time::{interval, Duration};
@@ -12,6 +13,12 @@ use crate::video::HwAccel;
 
 /// NIP-89 DVM Announcement kind (31990)
 pub const DVM_ANNOUNCEMENT_KIND: Kind = Kind::Custom(31990);
+
+/// NIP-65 Relay List Metadata kind (10002)
+pub const RELAY_LIST_KIND: Kind = Kind::Custom(10002);
+
+/// Index relays that aggregate relay lists (published to in addition to DVM relays)
+const INDEX_RELAYS: &[&str] = &["wss://purplepag.es"];
 
 /// DVM service identifier for video transformation
 pub const DVM_SERVICE_ID: &str = "video-transform-hls";
@@ -103,6 +110,17 @@ pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuild
     EventBuilder::new(DVM_ANNOUNCEMENT_KIND, "", tags)
 }
 
+/// Builds a NIP-65 relay list metadata event (kind 10002)
+pub fn build_relay_list_event(config: &Config) -> EventBuilder {
+    let tags: Vec<Tag> = config
+        .nostr_relays
+        .iter()
+        .map(|url| Tag::custom(TagKind::Custom("r".into()), vec![url.to_string()]))
+        .collect();
+
+    EventBuilder::new(RELAY_LIST_KIND, "", tags)
+}
+
 /// Manages periodic DVM announcement publishing.
 ///
 /// Republishes whenever the config changes (via admin commands)
@@ -141,7 +159,10 @@ impl AnnouncementPublisher {
         // Give relays a few seconds to connect before the first announcement
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        self.publish_announcement().await;
+        // Initial publish: announcement + relay list
+        let config = self.current_snapshot().await;
+        self.publish_announcement(&config).await;
+        let mut last_relays = self.publish_relay_list(&config).await;
 
         // Then publish every hour or when config changes
         let mut ticker = interval(Duration::from_secs(3600));
@@ -150,11 +171,21 @@ impl AnnouncementPublisher {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    self.publish_announcement().await;
+                    let config = self.current_snapshot().await;
+                    self.publish_announcement(&config).await;
                 }
                 _ = self.config_notify.notified() => {
                     info!("Config changed, republishing announcement");
-                    self.publish_announcement().await;
+                    let config = self.current_snapshot().await;
+                    self.publish_announcement(&config).await;
+
+                    // Only republish relay list if relays actually changed
+                    let current_relays: HashSet<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
+                    if current_relays != last_relays {
+                        info!("Relay list changed, republishing NIP-65");
+                        last_relays = self.publish_relay_list(&config).await;
+                    }
+
                     // Reset the interval so we don't publish again too soon
                     ticker.reset();
                 }
@@ -183,17 +214,19 @@ impl AnnouncementPublisher {
             ffmpeg_path: self.config.ffmpeg_path.clone(),
             ffprobe_path: self.config.ffprobe_path.clone(),
             http_port: self.config.http_port,
+            http_enabled: self.config.http_enabled,
             dvm_name: state.config.name.clone(),
             dvm_about: state.config.about.clone(),
             admin_pubkey: state.config.admin.clone(),
         }
     }
 
-    async fn publish_announcement(&self) {
+    async fn current_snapshot(&self) -> Config {
         let state = self.state.read().await;
-        let config = self.current_config(&state);
-        drop(state);
+        self.current_config(&state)
+    }
 
+    async fn publish_announcement(&self, config: &Config) {
         let name = config
             .dvm_name
             .clone()
@@ -205,7 +238,7 @@ impl AnnouncementPublisher {
             "Publishing DVM announcement"
         );
 
-        let event = build_announcement_event(&config, self.hwaccel);
+        let event = build_announcement_event(config, self.hwaccel);
 
         match self.publisher.publish(event).await {
             Ok(_) => {
@@ -219,6 +252,44 @@ impl AnnouncementPublisher {
                 error!(error = %e, "Failed to publish DVM announcement");
             }
         }
+    }
+
+    /// Publish NIP-65 relay list. Returns the set of relays that were published.
+    async fn publish_relay_list(&self, config: &Config) -> HashSet<String> {
+        let relay_list = build_relay_list_event(config);
+
+        // Collect DVM relay URLs + index relay URLs
+        let mut relay_urls: Vec<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
+        for index_relay in INDEX_RELAYS {
+            let s = index_relay.to_string();
+            if !relay_urls.iter().any(|existing| existing.trim_end_matches('/') == s) {
+                relay_urls.push(s);
+            }
+        }
+
+        // Ensure index relays are connected
+        let index_urls: Vec<::url::Url> = INDEX_RELAYS
+            .iter()
+            .filter_map(|s| ::url::Url::parse(s).ok())
+            .collect();
+        self.publisher.ensure_relays_connected(&index_urls).await;
+
+        let published_relays: HashSet<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
+
+        match self.publisher.publish_to(relay_list, &relay_urls).await {
+            Ok(_) => {
+                info!(
+                    relays = ?config.nostr_relays.iter().map(|u| u.as_str()).collect::<Vec<_>>(),
+                    index_relays = ?INDEX_RELAYS,
+                    "NIP-65 relay list published"
+                );
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to publish relay list");
+            }
+        }
+
+        published_relays
     }
 }
 
@@ -246,6 +317,7 @@ mod tests {
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             http_port: 3000,
+            http_enabled: true,
             dvm_name: Some("Test DVM".to_string()),
             dvm_about: Some("Test DVM about".to_string()),
             admin_pubkey: Some(admin_pubkey.to_string()),
@@ -291,6 +363,7 @@ mod tests {
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             http_port: 3000,
+            http_enabled: true,
             dvm_name: Some("Test DVM".to_string()),
             dvm_about: Some("Test DVM about".to_string()),
             admin_pubkey: None,

@@ -53,6 +53,17 @@ impl EventPublisher {
         self.send_to(builder, &relays).await
     }
 
+    /// Publish an event to explicit relay URLs.
+    ///
+    /// Used when the caller knows exactly which relays to target.
+    pub async fn publish_to(
+        &self,
+        builder: EventBuilder,
+        relay_urls: &[String],
+    ) -> Result<EventId, DvmError> {
+        self.send_to(builder, relay_urls).await
+    }
+
     /// Publish an event to DVM config relays + job-specific relays.
     ///
     /// Used for status updates, results, and other job-related events.

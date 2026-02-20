@@ -15,6 +15,7 @@ pub struct Config {
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub http_port: u16,
+    pub http_enabled: bool,
     pub dvm_name: Option<String>,
     pub dvm_about: Option<String>,
     pub admin_pubkey: Option<String>,
@@ -49,6 +50,10 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3000);
 
+        let http_enabled = std::env::var("DISABLE_HTTP")
+            .map(|v| v != "1" && v.to_lowercase() != "true")
+            .unwrap_or(true);
+
         Ok(Self {
             nostr_keys: keys,
             nostr_relays: relays,
@@ -58,6 +63,7 @@ impl Config {
             ffmpeg_path,
             ffprobe_path,
             http_port,
+            http_enabled,
             dvm_name: remote.name.clone(),
             dvm_about: remote.about.clone(),
             admin_pubkey: remote.admin.clone(),

@@ -122,8 +122,9 @@ Required:
 - `OPERATOR_NPUB` - Nostr pubkey (npub or hex) of the DVM operator/admin. The DVM refuses to start without it.
 
 Optional (runtime configuration is managed via remote config NIP-78):
-- `BOOTSTRAP_RELAYS` - Comma-separated bootstrap relays (default: wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net)
+- `BOOTSTRAP_RELAYS` - Comma-separated bootstrap relays (default: wss://nos.lol,wss://relay.damus.io,wss://relay.nostu.be,wss://relay.snort.social)
 - `HTTP_PORT` - Default 3000
+- `DISABLE_HTTP` - Set to `1` or `true` to disable the embedded web server
 - `TEMP_DIR` - Default ./temp
 - `FFMPEG_PATH` / `FFPROBE_PATH` - Default uses system PATH
 - `RUST_LOG` - Logging level

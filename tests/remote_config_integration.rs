@@ -231,7 +231,7 @@ fn test_config_default_values() {
 
     assert_eq!(config.version, 1);
     assert!(config.admin.is_none());
-    assert_eq!(config.relays.len(), 3);
+    assert_eq!(config.relays.len(), 4);
     assert_eq!(config.blossom_servers.len(), 1);
     assert_eq!(config.blob_expiration_days, 30); // default
     assert_eq!(config.name, Some("Video Transcoder DVM".to_string()));
