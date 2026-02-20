@@ -52,29 +52,36 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 RUN cargo build --release
 
 # =============================================================================
-# Stage 3: Runtime image with FFmpeg + Intel QSV (OneVPL for 12th gen+)
+# Stage 3: Runtime image with Jellyfin FFmpeg (optimized for Intel/NVIDIA/AMD)
 # =============================================================================
 FROM debian:bookworm-slim
 
 # Enable non-free-firmware for Intel media drivers
-# Modify the DEB822 format sources file to include non-free components
 RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
 
-# Install Intel Media drivers (VA-API), and FFmpeg with QSV support
+# Install dependencies and Jellyfin FFmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && curl -fsSL https://repo.jellyfin.org/jellyfin_team.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/jellyfin.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture)] https://repo.jellyfin.org/debian bookworm main" > /etc/apt/sources.list.d/jellyfin.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    # Jellyfin FFmpeg (highly optimized for hardware transcoding)
+    jellyfin-ffmpeg7 \
     # Intel GPU VA-API drivers (supports 5th gen through current)
     intel-media-va-driver-non-free \
-    # VA-API libraries
+    # VA-API libraries and tools
     libva-drm2 \
     libva2 \
     vainfo \
-    # FFmpeg with hardware acceleration support
-    ffmpeg \
     # Runtime dependencies
     libssl3 \
-    ca-certificates \
-    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Symlink jellyfin-ffmpeg to standard paths
+RUN ln -s /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg && \
+    ln -s /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe
 
 # Create non-root user with video/render group access for GPU
 RUN groupadd -f video && \

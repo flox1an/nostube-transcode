@@ -224,8 +224,12 @@ impl FfmpegCommand {
         if let Some(hwaccel_type) = self.hwaccel.hwaccel_type() {
             cmd.arg("-hwaccel").arg(hwaccel_type);
 
-            // QSV-specific device
-            if let Some(device) = self.hwaccel.qsv_device() {
+            // Set the hardware device for the decoder
+            if self.hwaccel == HwAccel::Vaapi {
+                // For VAAPI, we use the device name initialized in init_hw_device
+                cmd.arg("-hwaccel_device").arg("vaapi");
+            } else if let Some(device) = self.hwaccel.qsv_device() {
+                // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
             }
 
@@ -268,7 +272,16 @@ impl FfmpegCommand {
         // For hardware acceleration that needs explicit frame upload (e.g., QSV when hwaccel_output_format
         // is not set), prepend the hwupload filter to convert software frames to hardware frames.
         // This handles cases where hardware decoding falls back to software (e.g., QSV can't decode AV1).
-        let input_chain = if self.hwaccel.hwaccel_output_format().is_none() {
+        let input_chain = if self.hwaccel == HwAccel::Vaapi {
+            // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
+            // and use hwupload to ensure they are in VAAPI memory before scaling.
+            // When already in vaapi memory, this is very efficient.
+            format!(
+                "[0:v]format=nv12|vaapi,hwupload=extra_hw_frames=64,split={}{}",
+                non_original.len(),
+                output_labels.join("")
+            )
+        } else if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
                 // Upload frames to hardware memory before splitting/scaling
                 // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
@@ -548,10 +561,14 @@ impl FfmpegMp4Command {
         let (_width, height) = self.resolution.dimensions();
         let scale_filter = self.hwaccel.scale_filter();
 
-        // For QSV, when hwaccel_output_format is not set (to handle software decode fallback),
-        // we need to upload frames to QSV memory before applying QSV filters
-        // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
-        let vf = if self.hwaccel.hwaccel_output_format().is_none() {
+        // For hardware acceleration that needs explicit frame upload (e.g., QSV when hwaccel_output_format
+        // is not set), prepend the hwupload filter to convert software frames to hardware frames.
+        // This handles cases where hardware decoding falls back to software (e.g., QSV can't decode AV1).
+        let vf = if self.hwaccel == HwAccel::Vaapi {
+            // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
+            // and use hwupload to ensure they are in VAAPI memory before scaling.
+            format!("format=nv12|vaapi,hwupload=extra_hw_frames=64,{}=w=-2:h={}", scale_filter, height)
+        } else if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
                 format!("{},{}=w=-2:h={}", upload_filter, scale_filter, height)
             } else {
@@ -630,8 +647,12 @@ impl FfmpegMp4Command {
         if let Some(hwaccel_type) = self.hwaccel.hwaccel_type() {
             cmd.arg("-hwaccel").arg(hwaccel_type);
 
-            // QSV-specific device
-            if let Some(device) = self.hwaccel.qsv_device() {
+            // Set the hardware device for the decoder
+            if self.hwaccel == HwAccel::Vaapi {
+                // For VAAPI, we use the device name initialized in init_hw_device
+                cmd.arg("-hwaccel_device").arg("vaapi");
+            } else if let Some(device) = self.hwaccel.qsv_device() {
+                // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
             }
 

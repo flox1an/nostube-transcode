@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "nostube-transcode"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "anyhow",
  "axum",

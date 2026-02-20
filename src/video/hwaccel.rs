@@ -322,10 +322,9 @@ impl HwAccel {
     pub fn hwaccel_output_format(&self) -> Option<&'static str> {
         match self {
             Self::Nvenc => Some("cuda"),
-            // VAAPI: Don't use hwaccel_output_format because VAAPI can't decode all codecs
-            // (e.g., AV1 may not be supported). When HW decode fails, FFmpeg falls back to
-            // software decoding. Instead, we use upload_filter() to explicitly upload frames.
-            Self::Vaapi => None,
+            // VAAPI: Keep frames in GPU memory. If hardware decoding falls back to software,
+            // the filter graph will handle the upload via upload_filter().
+            Self::Vaapi => Some("vaapi"),
             // QSV: Don't use hwaccel_output_format because QSV can't decode all codecs
             // (e.g., AV1 on many platforms). When HW decode fails, FFmpeg falls back to
             // software decoding which outputs software frames. If hwaccel_output_format=qsv
