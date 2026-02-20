@@ -355,15 +355,17 @@ impl FfmpegCommand {
                 }
                 (None, Some(h)) => {
                     // Only height specified - auto-calculate width to preserve aspect ratio
+                    // Use -1 for width due to observed QSV scale filter behavior
                     parts.push(format!(
-                        "[{}]{}=w=-2:h={}[{}out]",
+                        "[{}]{}=w=-1:h={}[{}out]",
                         name, scale_filter, h, name
                     ));
                 }
                 (Some(w), None) => {
                     // Only width specified - auto-calculate height to preserve aspect ratio
+                    // Use -1 for height due to observed QSV scale filter behavior
                     parts.push(format!(
-                        "[{}]{}=w={}:h=-2[{}out]",
+                        "[{}]{}=w={}:h=-1[{}out]",
                         name, scale_filter, w, name
                     ));
                 }
