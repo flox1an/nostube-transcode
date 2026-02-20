@@ -34,7 +34,7 @@ impl HwAccel {
             return Self::VideoToolbox;
         }
 
-        // Linux: check for NVIDIA first (usually faster), then VAAPI (works on all Intel), then QSV
+        // Linux: check for NVIDIA first (usually faster), then QSV (more robust for Intel AV1), then VAAPI
         #[cfg(target_os = "linux")]
         {
             if Self::is_nvidia_available() {
@@ -42,14 +42,15 @@ impl HwAccel {
                 return Self::Nvenc;
             }
 
-            if Self::is_vaapi_available() {
-                info!("Detected VAAPI hardware acceleration");
-                return Self::Vaapi;
-            }
-
+            // Check QSV before VAAPI for Intel
             if Self::is_qsv_available() {
                 info!("Detected Intel QSV hardware acceleration");
                 return Self::Qsv;
+            }
+
+            if Self::is_vaapi_available() {
+                info!("Detected VAAPI hardware acceleration");
+                return Self::Vaapi;
             }
         }
 
