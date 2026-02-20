@@ -243,21 +243,13 @@ impl FfmpegCommand {
                 if let Some(ref source) = self.source_codec {
                     let codec = Codec::from_str(source);
                     if let Some(decoder) = self.hwaccel.video_decoder(codec) {
-                        // Explicitly request hardware decoder (e.g. av1_qsv)
+                        // Explicitly request hardware decoder (e.g. av1_vaapi)
                         cmd.arg("-c:v").arg(decoder);
                     }
                 }
             } else if let Some(device) = self.hwaccel.qsv_device() {
                 // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
-
-                // Explicitly hint the hardware decoder if we know the source codec
-                if let Some(ref source) = self.source_codec {
-                    let codec = Codec::from_str(source);
-                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
-                        cmd.arg("-c:v").arg(decoder);
-                    }
-                }
             }
 
             // Keep frames in hardware memory
@@ -308,13 +300,6 @@ impl FfmpegCommand {
                 non_original.len(),
                 output_labels.join("")
             )
-        } else if self.hwaccel == HwAccel::Qsv {
-            // For QSV, use hwmap to keep frames in QSV context for filtering
-            format!(
-                "[0:v]hwmap=derive_device=qsv,format=qsv,split={}{}",
-                non_original.len(),
-                output_labels.join("")
-            )
         } else if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
                 // Upload frames to hardware memory before splitting/scaling
@@ -355,17 +340,15 @@ impl FfmpegCommand {
                 }
                 (None, Some(h)) => {
                     // Only height specified - auto-calculate width to preserve aspect ratio
-                    // Use -1 for width due to observed QSV scale filter behavior
                     parts.push(format!(
-                        "[{}]{}=w=-1:h={}[{}out]",
+                        "[{}]{}=w=-2:h={}[{}out]",
                         name, scale_filter, h, name
                     ));
                 }
                 (Some(w), None) => {
                     // Only width specified - auto-calculate height to preserve aspect ratio
-                    // Use -1 for height due to observed QSV scale filter behavior
                     parts.push(format!(
-                        "[{}]{}=w={}:h=-1[{}out]",
+                        "[{}]{}=w={}:h=-2[{}out]",
                         name, scale_filter, w, name
                     ));
                 }
@@ -612,18 +595,15 @@ impl FfmpegMp4Command {
         let vf = if self.hwaccel == HwAccel::Vaapi {
             // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
             // and use hwupload to ensure they are in VAAPI memory before scaling.
-            format!("format=nv12|vaapi,hwupload=extra_hw_frames=64,{}=w=-1:h={}", scale_filter, height)
-        } else if self.hwaccel == HwAccel::Qsv {
-            // For QSV, use hwmap to keep frames in QSV context for filtering
-            format!("hwmap=derive_device=qsv,scale_qsv=w=-1:h={}", height)
+            format!("format=nv12|vaapi,hwupload=extra_hw_frames=64,{}=w=-2:h={}", scale_filter, height)
         } else if self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
-                format!("{},{}=w=-1:h={}", upload_filter, scale_filter, height)
+                format!("{},{}=w=-2:h={}", upload_filter, scale_filter, height)
             } else {
-                format!("{}=w=-1:h={}", scale_filter, height)
+                format!("{}=w=-2:h={}", scale_filter, height)
             }
         } else {
-            format!("{}=w=-1:h={}", scale_filter, height)
+            format!("{}=w=-2:h={}", scale_filter, height)
         };
         cmd.arg("-vf").arg(vf);
 
@@ -712,14 +692,6 @@ impl FfmpegMp4Command {
             } else if let Some(device) = self.hwaccel.qsv_device() {
                 // QSV-specific device
                 cmd.arg("-qsv_device").arg(device);
-
-                // Explicitly hint the hardware decoder if we know the source codec
-                if let Some(ref source) = self.source_codec {
-                    let codec = Codec::from_str(source);
-                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
-                        cmd.arg("-c:v").arg(decoder);
-                    }
-                }
             }
 
             // Keep frames in hardware memory

@@ -34,7 +34,7 @@ impl HwAccel {
             return Self::VideoToolbox;
         }
 
-        // Linux: check for NVIDIA first (usually faster), then QSV (more robust for Intel AV1), then VAAPI
+        // Linux: check for NVIDIA first (usually faster), then VAAPI (works on all Intel), then QSV
         #[cfg(target_os = "linux")]
         {
             if Self::is_nvidia_available() {
@@ -42,15 +42,14 @@ impl HwAccel {
                 return Self::Nvenc;
             }
 
-            // Check QSV before VAAPI for Intel
-            if Self::is_qsv_available() {
-                info!("Detected Intel QSV hardware acceleration");
-                return Self::Qsv;
-            }
-
             if Self::is_vaapi_available() {
                 info!("Detected VAAPI hardware acceleration");
                 return Self::Vaapi;
+            }
+
+            if Self::is_qsv_available() {
+                info!("Detected Intel QSV hardware acceleration");
+                return Self::Qsv;
             }
         }
 
@@ -175,16 +174,14 @@ impl HwAccel {
             }
         }
 
-        // --- Test AV1 hardware decoding via VAAPI ---
+        // --- Test AV1 VAAPI decoding ---
         // This probe verifies that FFmpeg can use the VAAPI device for AV1 decoding.
-        // We use a dummy input and try to decode it using the hardware-accelerated 'av1' decoder.
+        // We use a dummy input and try to decode it using av1_vaapi.
         let av1_result = Command::new("ffmpeg")
             .args([
                 "-hide_banner",
                 "-loglevel",
                 "error",
-                "-hwaccel",
-                "vaapi",
                 "-init_hw_device",
                 &format!("vaapi=vaapi:{}", device),
                 "-filter_hw_device",
@@ -192,9 +189,11 @@ impl HwAccel {
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=black:s=64x64:d=0.1",
+                "color=c=black:s=64x64:d=0.1", // Dummy input source
                 "-vf",
-                "format=nv12,hwupload",
+                "format=nv12,hwupload", // Ensure frames are in VAAPI memory
+                "-c:v",
+                "av1_vaapi", // Explicitly request AV1 VAAPI decoder
                 "-frames:v",
                 "1",
                 "-f",
@@ -276,58 +275,22 @@ impl HwAccel {
 
         match result {
             Ok(output) if output.status.success() => {
-                info!(device = %device, "QSV HEVC encoding verified");
+                info!(device = %device, "QSV hardware acceleration verified");
                 true
             }
-            Ok(_) => {
-                // If HEVC encoding fails, check if AV1 decoding works at least
-                Self::is_qsv_av1_available()
-            }
-            Err(e) => {
-                debug!(error = %e, "Failed to run FFmpeg QSV HEVC probe");
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    device = %device,
+                    stderr = %stderr,
+                    "QSV probe failed, falling back to software encoding"
+                );
                 false
             }
-        }
-    }
-
-    /// Check if AV1 QSV decoding is available
-    #[cfg(target_os = "linux")]
-    fn is_qsv_av1_available() -> bool {
-        let render_devices = ["/dev/dri/renderD128", "/dev/dri/renderD129"];
-        let device = render_devices.iter().find(|d| Path::new(*d).exists());
-        let Some(device) = device else { return false; };
-
-        let result = Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-init_hw_device",
-                &format!("qsv=qsv:hw_any,child_device={}", device),
-                "-filter_hw_device",
-                "qsv",
-                "-c:v",
-                "av1_qsv", // Test explicit AV1 QSV decoder
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=black:s=64x64:d=0.1",
-                "-vf",
-                "format=nv12,hwupload=extra_hw_frames=64",
-                "-frames:v",
-                "1",
-                "-f",
-                "null",
-                "-",
-            ])
-            .output();
-
-        match result {
-            Ok(output) if output.status.success() => {
-                info!(device = %device, "QSV AV1 decoding verified");
-                true
+            Err(e) => {
+                debug!(error = %e, "Failed to run FFmpeg QSV probe");
+                false
             }
-            _ => false,
         }
     }
 
@@ -388,8 +351,7 @@ impl HwAccel {
     pub fn video_decoder(&self, codec: Codec) -> Option<&'static str> {
         match (self, codec) {
             (Self::Nvenc, Codec::AV1) => Some("av1_cuvid"),
-            (Self::Vaapi, Codec::AV1) => Some("av1"), // Standard VAAPI decoder
-            (Self::Qsv, Codec::AV1) => Some("av1_qsv"),
+            (Self::Vaapi, Codec::AV1) => Some("av1_vaapi"),
             _ => None,
         }
     }
@@ -502,7 +464,7 @@ impl HwAccel {
             }
             Self::Qsv => {
                 let device = self.qsv_device().unwrap_or("/dev/dri/renderD128");
-                Some(format!("qsv=hw_qsv:hw_any,child_device={}", device))
+                Some(format!("qsv=qsv:hw_any,child_device={}", device))
             }
             _ => None,
         }
@@ -514,7 +476,7 @@ impl HwAccel {
         match self {
             Self::Nvenc => Some("cuda"),
             Self::Vaapi => Some("vaapi"),
-            Self::Qsv => Some("hw_qsv"),
+            Self::Qsv => Some("qsv"),
             _ => None,
         }
     }
