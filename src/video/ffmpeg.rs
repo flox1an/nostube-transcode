@@ -219,6 +219,7 @@ impl FfmpegCommand {
 
     /// Add hardware acceleration input options
     fn add_hwaccel_input_options(&self, cmd: &mut TokioCommand) {
+        debug!(hwaccel = ?self.hwaccel, source_codec = ?self.source_codec, "Configuring hardware acceleration input options for HLS");
         // Initialize hardware device for filter graphs
         if let Some(init_device) = self.hwaccel.init_hw_device() {
             cmd.arg("-init_hw_device").arg(&init_device);
@@ -659,6 +660,7 @@ impl FfmpegMp4Command {
 
     /// Add hardware acceleration input options
     fn add_hwaccel_input_options(&self, cmd: &mut TokioCommand) {
+        debug!(hwaccel = ?self.hwaccel, source_codec = ?self.source_codec, "Configuring hardware acceleration input options for MP4");
         // Initialize hardware device
         if let Some(init_device) = self.hwaccel.init_hw_device() {
             cmd.arg("-init_hw_device").arg(&init_device);
