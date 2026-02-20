@@ -186,14 +186,14 @@ impl HwAccel {
                 &format!("vaapi=vaapi:{}", device),
                 "-filter_hw_device",
                 "vaapi",
+                "-c:v",
+                "av1_vaapi", // Decoder hint MUST come before -i
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=black:s=64x64:d=0.1", // Dummy input source
+                "color=c=black:s=64x64:d=0.1",
                 "-vf",
-                "format=nv12,hwupload", // Ensure frames are in VAAPI memory
-                "-c:v",
-                "av1_vaapi", // Explicitly request AV1 VAAPI decoder
+                "format=nv12,hwupload",
                 "-frames:v",
                 "1",
                 "-f",
