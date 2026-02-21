@@ -28,6 +28,8 @@ services:
       - "5207:5207"
 
     volumes:
+      # Persistent data directory (identity key, remote config)
+      - ./data:/app/data
       # Persistent temp directory (optional, for debugging)
       - ./temp:/app/temp
 
@@ -38,4 +40,5 @@ services:
       # Intel QSV - Use Intel Media Driver for AV1/HEVC hardware decode
       - LIBVA_DRIVER_NAME=iHD
       - HTTP_PORT=5207
+      - DATA_DIR=/app/data
       - TEMP_DIR=/app/temp

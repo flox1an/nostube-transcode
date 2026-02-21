@@ -3,3 +3,7 @@
 RUST_DVM_SPEC.md
 target/
 
+
+# Docker compose local directories
+data/
+temp/

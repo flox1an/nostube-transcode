@@ -30,6 +30,8 @@ services:
       - "5207:5207"
 
     volumes:
+      # Persistent data directory (identity key, remote config)
+      - ./data:/app/data
       # Persistent temp directory (optional, for debugging)
       - ./temp:/app/temp
 
@@ -41,4 +43,5 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - HTTP_PORT=5207
+      - DATA_DIR=/app/data
       - TEMP_DIR=/app/temp
