@@ -93,8 +93,8 @@ WORKDIR /app
 # Copy the built binary
 COPY --from=builder /app/target/release/nostube-transcode /usr/local/bin/nostube-transcode
 
-# Create temp directory with proper permissions
-RUN mkdir -p /app/temp && chown -R dvm:dvm /app
+# Create data and temp directories with proper permissions
+RUN mkdir -p /app/data /app/temp && chown -R dvm:dvm /app
 
 # Switch to non-root user
 USER dvm
