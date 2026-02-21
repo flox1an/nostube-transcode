@@ -60,7 +60,11 @@ FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install FFmpeg with NVENC support and runtime dependencies
-# Note: Ubuntu 24.04's ffmpeg includes NVENC support when CUDA libraries are present
+# Note: Ubuntu 24.04's ffmpeg includes NVENC support when CUDA libraries are present.
+# The nvidia-container-toolkit automatically mounts the host's libnvidia-encode/decode
+# libraries into the container, matching the host driver version. Do NOT install
+# version-pinned libnvidia-encode-XXX/libnvidia-decode-XXX packages here, as they
+# may conflict with the host driver version.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # FFmpeg with hardware acceleration
     ffmpeg \
@@ -68,9 +72,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3t64 \
     ca-certificates \
     curl \
-    # NVENC requires these CUDA libraries (already in base image, but explicit)
-    libnvidia-encode-550 \
-    libnvidia-decode-550 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (no fixed UID — nvidia/cuda base may already have UID 1000)

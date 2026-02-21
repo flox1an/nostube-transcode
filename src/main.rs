@@ -123,13 +123,13 @@ async fn main() -> anyhow::Result<()> {
     ));
     let blossom = Arc::new(BlossomClient::new(startup.config.clone(), startup.state.clone()));
     let processor = Arc::new(VideoProcessor::new(startup.config.clone()));
-    let job_handler = JobHandler::new(
+    let job_handler = Arc::new(JobHandler::new(
         startup.config.clone(),
         startup.state.clone(),
         job_publisher,
         blossom,
         processor,
-    );
+    ));
 
     let job_handle = tokio::spawn(async move {
         job_handler.run(job_rx).await;

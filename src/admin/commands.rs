@@ -51,6 +51,8 @@ pub enum AdminCommand {
         name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         about: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_concurrent_jobs: Option<u32>,
     },
     /// Run self-test (encode a short video)
     SelfTest,
@@ -147,12 +149,17 @@ impl AdminRequest {
                 let about = self.params.get("about")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                let max_concurrent_jobs = self.params.get("max_concurrent_jobs")
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()
+                    .map_err(|e| format!("invalid max_concurrent_jobs: {e}"))?;
                 Ok(AdminCommand::SetConfig {
                     relays,
                     blossom_servers,
                     blob_expiration_days,
                     name,
                     about,
+                    max_concurrent_jobs,
                 })
             }
             "self_test" => Ok(AdminCommand::SelfTest),
@@ -322,6 +329,8 @@ pub struct ConfigData {
     pub about: Option<String>,
     /// Whether DVM is paused
     pub paused: bool,
+    /// Maximum number of concurrent video transformations
+    pub max_concurrent_jobs: u32,
 }
 
 /// Status response data.
@@ -550,6 +559,7 @@ mod tests {
                 blob_expiration_days: None,
                 name: Some("Updated".to_string()),
                 about: None,
+                max_concurrent_jobs: None,
             }
         );
     }
@@ -582,6 +592,7 @@ mod tests {
             name: None,
             about: None,
             paused: false,
+            max_concurrent_jobs: 1,
         };
         let response = AdminResponse::ok_with_data(ResponseData::Config(ConfigResponse {
             config: config_data,
