@@ -57,9 +57,17 @@ impl Codec {
             Self::AV1 => "av1",
         }
     }
+
+    pub fn friendly_name(&self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::H265 => "H.265",
+            Self::AV1 => "AV1",
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Resolution {
     R240p,
     R360p,
@@ -67,53 +75,12 @@ pub enum Resolution {
     #[default]
     R720p,
     R1080p,
-}
-
-impl Resolution {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "240p" => Self::R240p,
-            "360p" => Self::R360p,
-            "480p" => Self::R480p,
-            "1080p" => Self::R1080p,
-            _ => Self::R720p,
-        }
-    }
-
-    pub fn dimensions(&self) -> (u32, u32) {
-        match self {
-            Self::R240p => (426, 240),
-            Self::R360p => (640, 360),
-            Self::R480p => (854, 480),
-            Self::R720p => (1280, 720),
-            Self::R1080p => (1920, 1080),
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::R240p => "240p",
-            Self::R360p => "360p",
-            Self::R480p => "480p",
-            Self::R720p => "720p",
-            Self::R1080p => "1080p",
-        }
-    }
-}
-
-/// HLS resolution selection for adaptive streaming
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HlsResolution {
-    R240p,
-    R360p,
-    R480p,
-    R720p,
-    R1080p,
     /// Include original quality (passthrough if codec compatible, else re-encode)
     Original,
 }
 
-impl HlsResolution {
+impl Resolution {
+    /// Parse from string. Returns `None` for unrecognized values.
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "240p" => Some(Self::R240p),
@@ -124,6 +91,12 @@ impl HlsResolution {
             "original" => Some(Self::Original),
             _ => None,
         }
+    }
+
+    /// Parse from string, falling back to 720p for unrecognized values.
+    /// Use this when a single MP4 resolution is required.
+    pub fn from_str_or_default(s: &str) -> Self {
+        Self::from_str(s).unwrap_or(Self::R720p)
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -137,7 +110,7 @@ impl HlsResolution {
         }
     }
 
-    /// Get the height in pixels for this resolution (None for Original)
+    /// Get the height in pixels. Returns `None` for `Original`.
     pub fn height(&self) -> Option<u32> {
         match self {
             Self::R240p => Some(240),
@@ -149,7 +122,19 @@ impl HlsResolution {
         }
     }
 
-    /// Returns all available HLS resolutions (default selection)
+    /// Get the (width, height) dimensions. Returns `None` for `Original`.
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::R240p => Some((426, 240)),
+            Self::R360p => Some((640, 360)),
+            Self::R480p => Some((854, 480)),
+            Self::R720p => Some((1280, 720)),
+            Self::R1080p => Some((1920, 1080)),
+            Self::Original => None,
+        }
+    }
+
+    /// Returns all resolutions including `Original`.
     pub fn all() -> Vec<Self> {
         vec![
             Self::R240p,
@@ -160,13 +145,6 @@ impl HlsResolution {
             Self::Original,
         ]
     }
-}
-
-/// Parse comma-separated HLS resolutions string
-pub fn parse_hls_resolutions(s: &str) -> Vec<HlsResolution> {
-    s.split(',')
-        .filter_map(|r| HlsResolution::from_str(r.trim()))
-        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -187,7 +165,7 @@ pub struct JobContext {
     pub resolution: Resolution,
     pub codec: Codec,
     /// Selected resolutions for HLS mode (empty means use all)
-    pub hls_resolutions: Vec<HlsResolution>,
+    pub hls_resolutions: Vec<Resolution>,
     /// Enable AES-128 encryption for HLS (defaults to true for backward compatibility)
     pub encryption: bool,
     /// Cashu token for payment (optional)
@@ -416,11 +394,11 @@ impl JobContext {
 
     fn extract_params_from_tags(
         tags: &[Tag],
-    ) -> (OutputMode, Resolution, Codec, Vec<HlsResolution>, bool) {
+    ) -> (OutputMode, Resolution, Codec, Vec<Resolution>, bool) {
         let mut mode = OutputMode::default();
         let mut resolution = Resolution::default();
         let mut codec = Codec::default();
-        let mut hls_resolutions = Vec::new();
+        let mut hls_resolutions: Vec<Resolution> = Vec::new();
         let mut encryption = true; // Default to true for backward compatibility
 
         for tag in tags.iter() {
@@ -428,9 +406,9 @@ impl JobContext {
             if parts.first() == Some(&"param") && parts.len() >= 3 {
                 match parts[1] {
                     "mode" => mode = OutputMode::from_str(parts[2]),
-                    "resolution" => resolution = Resolution::from_str(parts[2]),
+                    "resolution" => resolution = Resolution::from_str_or_default(parts[2]),
                     "codec" => codec = Codec::from_str(parts[2]),
-                    "resolutions" => hls_resolutions = parse_hls_resolutions(parts[2]),
+                    "resolutions" => hls_resolutions = parts[2].split(',').filter_map(|r| Resolution::from_str(r.trim())).collect(),
                     "encryption" => encryption = parts[2].to_lowercase() != "false",
                     _ => {}
                 }
@@ -439,7 +417,7 @@ impl JobContext {
 
         // If no resolutions specified, use all (backward compatibility)
         if hls_resolutions.is_empty() {
-            hls_resolutions = HlsResolution::all();
+            hls_resolutions = Resolution::all();
         }
 
         (mode, resolution, codec, hls_resolutions, encryption)
@@ -702,64 +680,70 @@ mod tests {
     }
 
     #[test]
-    fn test_hls_resolution_from_str() {
-        assert_eq!(HlsResolution::from_str("240p"), Some(HlsResolution::R240p));
-        assert_eq!(HlsResolution::from_str("360p"), Some(HlsResolution::R360p));
-        assert_eq!(HlsResolution::from_str("480p"), Some(HlsResolution::R480p));
-        assert_eq!(HlsResolution::from_str("720p"), Some(HlsResolution::R720p));
-        assert_eq!(
-            HlsResolution::from_str("1080p"),
-            Some(HlsResolution::R1080p)
-        );
-        assert_eq!(
-            HlsResolution::from_str("original"),
-            Some(HlsResolution::Original)
-        );
-        assert_eq!(
-            HlsResolution::from_str("ORIGINAL"),
-            Some(HlsResolution::Original)
-        );
-        assert_eq!(HlsResolution::from_str("invalid"), None);
+    fn test_resolution_from_str() {
+        assert_eq!(Resolution::from_str("240p"), Some(Resolution::R240p));
+        assert_eq!(Resolution::from_str("360p"), Some(Resolution::R360p));
+        assert_eq!(Resolution::from_str("480p"), Some(Resolution::R480p));
+        assert_eq!(Resolution::from_str("720p"), Some(Resolution::R720p));
+        assert_eq!(Resolution::from_str("1080p"), Some(Resolution::R1080p));
+        assert_eq!(Resolution::from_str("original"), Some(Resolution::Original));
+        assert_eq!(Resolution::from_str("ORIGINAL"), Some(Resolution::Original));
+        assert_eq!(Resolution::from_str("invalid"), None);
     }
 
     #[test]
-    fn test_hls_resolution_height() {
-        assert_eq!(HlsResolution::R240p.height(), Some(240));
-        assert_eq!(HlsResolution::R720p.height(), Some(720));
-        assert_eq!(HlsResolution::Original.height(), None);
+    fn test_resolution_from_str_or_default() {
+        assert_eq!(Resolution::from_str_or_default("720p"), Resolution::R720p);
+        assert_eq!(Resolution::from_str_or_default("invalid"), Resolution::R720p);
     }
 
     #[test]
-    fn test_parse_hls_resolutions() {
-        let resolutions = parse_hls_resolutions("240p,720p,original");
+    fn test_resolution_height() {
+        assert_eq!(Resolution::R240p.height(), Some(240));
+        assert_eq!(Resolution::R720p.height(), Some(720));
+        assert_eq!(Resolution::Original.height(), None);
+    }
+
+    #[test]
+    fn test_parse_resolutions_inline() {
+        let resolutions: Vec<Resolution> = "240p,720p,original"
+            .split(',')
+            .filter_map(|r| Resolution::from_str(r.trim()))
+            .collect();
         assert_eq!(resolutions.len(), 3);
-        assert!(resolutions.contains(&HlsResolution::R240p));
-        assert!(resolutions.contains(&HlsResolution::R720p));
-        assert!(resolutions.contains(&HlsResolution::Original));
+        assert!(resolutions.contains(&Resolution::R240p));
+        assert!(resolutions.contains(&Resolution::R720p));
+        assert!(resolutions.contains(&Resolution::Original));
     }
 
     #[test]
-    fn test_parse_hls_resolutions_with_spaces() {
-        let resolutions = parse_hls_resolutions("240p, 720p, 1080p");
+    fn test_parse_resolutions_with_spaces() {
+        let resolutions: Vec<Resolution> = "240p, 720p, 1080p"
+            .split(',')
+            .filter_map(|r| Resolution::from_str(r.trim()))
+            .collect();
         assert_eq!(resolutions.len(), 3);
-        assert!(resolutions.contains(&HlsResolution::R240p));
-        assert!(resolutions.contains(&HlsResolution::R720p));
-        assert!(resolutions.contains(&HlsResolution::R1080p));
+        assert!(resolutions.contains(&Resolution::R240p));
+        assert!(resolutions.contains(&Resolution::R720p));
+        assert!(resolutions.contains(&Resolution::R1080p));
     }
 
     #[test]
-    fn test_parse_hls_resolutions_ignores_invalid() {
-        let resolutions = parse_hls_resolutions("240p,invalid,720p");
+    fn test_parse_resolutions_ignores_invalid() {
+        let resolutions: Vec<Resolution> = "240p,invalid,720p"
+            .split(',')
+            .filter_map(|r| Resolution::from_str(r.trim()))
+            .collect();
         assert_eq!(resolutions.len(), 2);
-        assert!(resolutions.contains(&HlsResolution::R240p));
-        assert!(resolutions.contains(&HlsResolution::R720p));
+        assert!(resolutions.contains(&Resolution::R240p));
+        assert!(resolutions.contains(&Resolution::R720p));
     }
 
     #[test]
-    fn test_hls_resolution_all() {
-        let all = HlsResolution::all();
+    fn test_resolution_all() {
+        let all = Resolution::all();
         assert_eq!(all.len(), 6);
-        assert!(all.contains(&HlsResolution::R240p));
-        assert!(all.contains(&HlsResolution::Original));
+        assert!(all.contains(&Resolution::R240p));
+        assert!(all.contains(&Resolution::Original));
     }
 }

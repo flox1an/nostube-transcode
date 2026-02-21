@@ -219,48 +219,7 @@ impl FfmpegCommand {
 
     /// Add hardware acceleration input options
     fn add_hwaccel_input_options(&self, cmd: &mut TokioCommand) {
-        debug!(hwaccel = ?self.hwaccel, source_codec = ?self.source_codec, "Configuring hardware acceleration input options for HLS");
-        // Initialize hardware device for filter graphs
-        if let Some(init_device) = self.hwaccel.init_hw_device() {
-            cmd.arg("-init_hw_device").arg(&init_device);
-        }
-
-        // Tell FFmpeg which device to use for filter operations (needed for hwupload)
-        if let Some(filter_device) = self.hwaccel.filter_hw_device() {
-            cmd.arg("-filter_hw_device").arg(filter_device);
-        }
-
-        // Hardware accelerated decoding
-        if let Some(hwaccel_type) = self.hwaccel.hwaccel_type() {
-            cmd.arg("-hwaccel").arg(hwaccel_type);
-
-            // Set the hardware device for the decoder
-            if self.hwaccel == HwAccel::Vaapi {
-                // For VAAPI, we use the device name initialized in init_hw_device
-                cmd.arg("-hwaccel_device").arg("vaapi");
-
-                // Explicitly hint the hardware decoder if we know the source codec
-                if let Some(ref source) = self.source_codec {
-                    let codec = Codec::from_str(source);
-                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
-                        // Explicitly request hardware decoder (e.g. av1_vaapi)
-                        cmd.arg("-c:v").arg(decoder);
-                    }
-                }
-            } else if let Some(device) = self.hwaccel.qsv_device() {
-                // QSV-specific device
-                cmd.arg("-qsv_device").arg(device);
-            }
-
-            // Keep frames in hardware memory
-            if let Some(output_format) = self.hwaccel.hwaccel_output_format() {
-                cmd.arg("-hwaccel_output_format").arg(output_format);
-            }
-        }
-
-        // Enable multi-threaded decoding for software decoders (e.g., libdav1d for AV1)
-        // This significantly improves decode performance for CPU-decoded formats
-        cmd.arg("-threads").arg("0");
+        apply_hwaccel_input_options(&self.hwaccel, &self.source_codec, cmd, "HLS");
     }
 
     fn build_complex_filter(&self) -> String {
@@ -489,6 +448,56 @@ impl FfmpegCommand {
     }
 }
 
+fn apply_hwaccel_input_options(
+    hwaccel: &HwAccel,
+    source_codec: &Option<String>,
+    cmd: &mut TokioCommand,
+    label: &str,
+) {
+    debug!(hwaccel = ?hwaccel, source_codec = ?source_codec, label = label, "Configuring hardware acceleration input options");
+    // Initialize hardware device for filter graphs
+    if let Some(init_device) = hwaccel.init_hw_device() {
+        cmd.arg("-init_hw_device").arg(&init_device);
+    }
+
+    // Tell FFmpeg which device to use for filter operations (needed for hwupload)
+    if let Some(filter_device) = hwaccel.filter_hw_device() {
+        cmd.arg("-filter_hw_device").arg(filter_device);
+    }
+
+    // Hardware accelerated decoding
+    if let Some(hwaccel_type) = hwaccel.hwaccel_type() {
+        cmd.arg("-hwaccel").arg(hwaccel_type);
+
+        // Set the hardware device for the decoder
+        if *hwaccel == HwAccel::Vaapi {
+            // For VAAPI, we use the device name initialized in init_hw_device
+            cmd.arg("-hwaccel_device").arg("vaapi");
+
+            // Explicitly hint the hardware decoder if we know the source codec
+            if let Some(ref source) = source_codec {
+                let codec = Codec::from_str(source);
+                if let Some(decoder) = hwaccel.video_decoder(codec) {
+                    // Explicitly request hardware decoder (e.g. av1_vaapi)
+                    cmd.arg("-c:v").arg(decoder);
+                }
+            }
+        } else if let Some(device) = hwaccel.qsv_device() {
+            // QSV-specific device
+            cmd.arg("-qsv_device").arg(device);
+        }
+
+        // Keep frames in hardware memory
+        if let Some(output_format) = hwaccel.hwaccel_output_format() {
+            cmd.arg("-hwaccel_output_format").arg(output_format);
+        }
+    }
+
+    // Enable multi-threaded decoding for software decoders (e.g., libdav1d for AV1)
+    // This significantly improves decode performance for CPU-decoded formats
+    cmd.arg("-threads").arg("0");
+}
+
 /// FFmpeg command builder for single MP4 output
 pub struct FfmpegMp4Command {
     input: String,
@@ -586,7 +595,7 @@ impl FfmpegMp4Command {
 
         // Scale filter using appropriate hardware filter
         // Use -2 for width to auto-calculate while preserving aspect ratio (and ensuring even dimensions)
-        let (_width, height) = self.resolution.dimensions();
+        let (_width, height) = self.resolution.dimensions().unwrap_or((1280, 720));
         let scale_filter = self.hwaccel.scale_filter();
 
         // For hardware acceleration that needs explicit frame upload (e.g., QSV when hwaccel_output_format
@@ -661,48 +670,7 @@ impl FfmpegMp4Command {
 
     /// Add hardware acceleration input options
     fn add_hwaccel_input_options(&self, cmd: &mut TokioCommand) {
-        debug!(hwaccel = ?self.hwaccel, source_codec = ?self.source_codec, "Configuring hardware acceleration input options for MP4");
-        // Initialize hardware device
-        if let Some(init_device) = self.hwaccel.init_hw_device() {
-            cmd.arg("-init_hw_device").arg(&init_device);
-        }
-
-        // Tell FFmpeg which device to use for filter operations (needed for hwupload)
-        if let Some(filter_device) = self.hwaccel.filter_hw_device() {
-            cmd.arg("-filter_hw_device").arg(filter_device);
-        }
-
-        // Hardware accelerated decoding
-        if let Some(hwaccel_type) = self.hwaccel.hwaccel_type() {
-            cmd.arg("-hwaccel").arg(hwaccel_type);
-
-            // Set the hardware device for the decoder
-            if self.hwaccel == HwAccel::Vaapi {
-                // For VAAPI, we use the device name initialized in init_hw_device
-                cmd.arg("-hwaccel_device").arg("vaapi");
-
-                // Explicitly hint the hardware decoder if we know the source codec
-                if let Some(ref source) = self.source_codec {
-                    let codec = Codec::from_str(source);
-                    if let Some(decoder) = self.hwaccel.video_decoder(codec) {
-                        // Explicitly request hardware decoder (e.g. av1_qsv)
-                        cmd.arg("-c:v").arg(decoder);
-                    }
-                }
-            } else if let Some(device) = self.hwaccel.qsv_device() {
-                // QSV-specific device
-                cmd.arg("-qsv_device").arg(device);
-            }
-
-            // Keep frames in hardware memory
-            if let Some(output_format) = self.hwaccel.hwaccel_output_format() {
-                cmd.arg("-hwaccel_output_format").arg(output_format);
-            }
-        }
-
-        // Enable multi-threaded decoding for software decoders (e.g., libdav1d for AV1)
-        // This significantly improves decode performance for CPU-decoded formats
-        cmd.arg("-threads").arg("0");
+        apply_hwaccel_input_options(&self.hwaccel, &self.source_codec, cmd, "MP4");
     }
 }
 

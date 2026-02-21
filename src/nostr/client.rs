@@ -10,7 +10,6 @@ use crate::dvm::events::{JobContext, DVM_VIDEO_TRANSFORM_REQUEST_KIND, DVM_STATU
 use crate::error::DvmError;
 
 pub struct SubscriptionManager {
-    #[allow(dead_code)]
     config: Arc<Config>,
     client: Client,
     state: SharedDvmState,

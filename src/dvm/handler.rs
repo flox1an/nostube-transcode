@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::dvm_state::SharedDvmState;
 use crate::dvm::events::{
     build_result_event_encrypted, build_status_event_with_eta_encrypted, build_status_event_with_context,
-    Codec, DvmResult, HlsResolution, JobContext, JobStatus, Mp4Result, OutputMode, CashuContext,
+    Codec, DvmResult, JobContext, JobStatus, Mp4Result, OutputMode, CashuContext, Resolution,
 };
 use crate::error::DvmError;
 use crate::nostr::EventPublisher;
@@ -20,6 +20,12 @@ use crate::video::{TransformResult, VideoMetadata, VideoProcessor};
 use cdk::nuts::Token;
 use cdk::amount::Amount;
 use std::str::FromStr;
+
+/// Default Cashu mint URL for payment requests
+const CASHU_MINT_URL: &str = "https://mint.bitonic.nl";
+
+/// DVM cost in satoshis (0 = free)
+const DVM_COST_SATS: u64 = 0;
 
 /// Tracks upload progress and dynamically estimates remaining time
 #[derive(Debug)]
@@ -76,7 +82,6 @@ impl UploadTracker {
 }
 
 pub struct JobHandler {
-    #[allow(dead_code)]
     config: Arc<Config>,
     state: SharedDvmState,
     publisher: Arc<EventPublisher>,
@@ -148,24 +153,7 @@ impl JobHandler {
                 return Ok(());
             }
 
-            // Public request with no p-tag: Send a Bid and save to state
-            debug!(job_id = %job_id, "Sending bid for public request");
-            
-            // Define DVM cost and mint
-            let dvm_cost_sats = 0; // Free for now
-            let mint_url = "https://mint.bitonic.nl";
-
-            self.send_cashu_bid(
-                &job,
-                mint_url,
-                dvm_cost_sats,
-                Some("I can process this video for you"),
-            )
-            .await?;
-
-            // Save to pending bids in state
-            self.state.write().await.add_bid(job);
-            return Ok(());
+            return self.send_public_bid(job).await;
         }
 
         // If we got here, it's addressed to us (Selection).
@@ -174,8 +162,8 @@ impl JobHandler {
         self.state.write().await.take_bid(&job_id);
         
         // Define DVM cost
-        let dvm_cost_sats = 0; 
-        let mint_url = "https://mint.bitonic.nl";
+        let dvm_cost_sats = DVM_COST_SATS;
+        let mint_url = CASHU_MINT_URL;
 
         if dvm_cost_sats > 0 {
             match job.cashu_token {
@@ -214,35 +202,7 @@ impl JobHandler {
         )
         .await?;
 
-        // Validate input
-        if job.input.input_type != "url" {
-            return self.send_error(&job, "Only URL inputs are supported").await;
-        }
-
-        // Validate URL scheme (only allow HTTP/HTTPS for security)
-        let input_url = &job.input.value;
-        if !input_url.starts_with("http://") && !input_url.starts_with("https://") {
-            return self
-                .send_error(&job, "Only HTTP and HTTPS URLs are supported")
-                .await;
-        }
-
-        // Perform HEAD request to check availability
-        match self.http.head(input_url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                debug!(url = %input_url, "URL is accessible");
-            }
-            Ok(resp) => {
-                let err_msg = format!("Input URL returned status {}", resp.status());
-                warn!(url = %input_url, error = %err_msg);
-                return self.send_error(&job, &err_msg).await;
-            }
-            Err(e) => {
-                let err_msg = format!("Failed to reach input URL: {}", e);
-                warn!(url = %input_url, error = %err_msg);
-                return self.send_error(&job, &err_msg).await;
-            }
-        }
+        self.validate_input(&job).await?;
 
         // Send processing status
         self.send_status(
@@ -285,6 +245,53 @@ impl JobHandler {
         Ok(())
     }
 
+    /// Send a bid for a public (non-directed) request
+    async fn send_public_bid(&self, job: JobContext) -> Result<(), DvmError> {
+        let job_id = job.event_id();
+        debug!(job_id = %job_id, "Sending bid for public request");
+        self.send_cashu_bid(
+            &job,
+            CASHU_MINT_URL,
+            DVM_COST_SATS,
+            Some("I can process this video for you"),
+        )
+        .await?;
+        self.state.write().await.add_bid(job);
+        Ok(())
+    }
+
+    /// Validate the input URL: type check, scheme check, and HEAD request
+    async fn validate_input(&self, job: &JobContext) -> Result<(), DvmError> {
+        if job.input.input_type != "url" {
+            return self.send_error(job, "Only URL inputs are supported").await;
+        }
+
+        let input_url = &job.input.value;
+        if !input_url.starts_with("http://") && !input_url.starts_with("https://") {
+            return self
+                .send_error(job, "Only HTTP and HTTPS URLs are supported")
+                .await;
+        }
+
+        match self.http.head(input_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                debug!(url = %input_url, "URL is accessible");
+            }
+            Ok(resp) => {
+                let err_msg = format!("Input URL returned status {}", resp.status());
+                warn!(url = %input_url, error = %err_msg);
+                return self.send_error(job, &err_msg).await;
+            }
+            Err(e) => {
+                let err_msg = format!("Failed to reach input URL: {}", e);
+                warn!(url = %input_url, error = %err_msg);
+                return self.send_error(job, &err_msg).await;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn process_video(&self, job: &JobContext) -> Result<DvmResult, DvmError> {
         let input_url = &job.input.value;
 
@@ -304,11 +311,7 @@ impl JobHandler {
 
         match job.mode {
             OutputMode::Mp4 => {
-                let codec_name = match job.codec {
-                    Codec::H264 => "H.264",
-                    Codec::H265 => "H.265",
-                    Codec::AV1 => "AV1", // Added AV1 support
-                };
+                let codec_name = job.codec.friendly_name();
                 let status_msg = format!(
                     "Transcoding to {} {} MP4",
                     job.resolution.as_str(),
@@ -420,7 +423,7 @@ impl JobHandler {
 
                 // Use user-selected resolutions (or all if not specified)
                 let selected_resolutions = if job.hls_resolutions.is_empty() {
-                    HlsResolution::all()
+                    Resolution::all()
                 } else {
                     job.hls_resolutions.clone()
                 };
@@ -428,11 +431,7 @@ impl JobHandler {
                 // Build status message based on selected resolutions
                 let resolution_list: Vec<&str> =
                     selected_resolutions.iter().map(|r| r.as_str()).collect();
-                let codec_name = match job.codec {
-                    Codec::H264 => "H.264",
-                    Codec::H265 => "H.265",
-                    Codec::AV1 => "AV1", // Added AV1 support
-                };
+                let codec_name = job.codec.friendly_name();
                 let status_msg = format!(
                     "Transcoding to {} HLS ({})",
                     codec_name,
@@ -448,7 +447,7 @@ impl JobHandler {
                 // Estimate: count encoded streams (non-original resolutions)
                 let encoded_count = selected_resolutions
                     .iter()
-                    .filter(|r| **r != HlsResolution::Original)
+                    .filter(|r| **r != Resolution::Original)
                     .count() as f64;
                 // Estimate: conservatively assume realtime encoding per resolution
                 let estimated_transcode_secs =
@@ -535,20 +534,16 @@ impl JobHandler {
             None
         };
 
-        // Spawn a background task for periodic updates
-        let progress_handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(5));
-            ticker.tick().await; // First tick is immediate, skip it
-
-            loop {
-                ticker.tick().await;
+        run_with_ticker(
+            publisher,
+            job_relays,
+            move || {
                 let elapsed_secs = start.elapsed().as_secs();
                 let actual_us = progress_ms.load(Ordering::Relaxed);
                 // FFmpeg's out_time_ms is actually in microseconds despite the name
                 let actual_secs = actual_us as f64 / 1_000_000.0;
 
                 let (progress_msg, remaining_secs, progress_pct) = if actual_us > 0 && total_duration_secs > 0.0 {
-                    // Use real-time progress from FFmpeg if available
                     let pct = ((actual_secs / total_duration_secs) * 100.0).min(99.0) as u32;
                     let speed = if elapsed_secs > 0 { actual_secs / elapsed_secs as f64 } else { 0.0 };
                     let remaining = if speed > 0.01 {
@@ -556,14 +551,12 @@ impl JobHandler {
                     } else {
                         estimated_secs.saturating_sub(elapsed_secs)
                     };
-
                     (
                         format!("{} ({}%, ~{} remaining)", message, pct, format_duration(remaining)),
                         Some(remaining),
                         Some(pct),
                     )
                 } else if estimated_secs > 0 {
-                    // Fall back to time-based estimation if real progress not yet available
                     let remaining = estimated_secs.saturating_sub(elapsed_secs);
                     let pct = ((elapsed_secs as f64 / estimated_secs as f64) * 100.0).min(99.0) as u32;
                     (
@@ -579,7 +572,7 @@ impl JobHandler {
                     )
                 };
 
-                let event = build_status_event_with_eta_encrypted(
+                build_status_event_with_eta_encrypted(
                     job_id,
                     requester,
                     JobStatus::Processing,
@@ -587,30 +580,11 @@ impl JobHandler {
                     remaining_secs,
                     encryption_keys.as_ref(),
                     progress_pct,
-                );
-
-                debug!(
-                    job_id = %job_id,
-                    progress = ?progress_pct,
-                    actual_secs = %actual_secs,
-                    eta = ?remaining_secs,
-                    message = %progress_msg,
-                    "Sending periodic transcode progress update"
-                );
-
-                if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
-                    debug!(error = %e, "Failed to send progress update");
-                }
-            }
-        });
-
-        // Run the actual operation
-        let result = future.await;
-
-        // Cancel the progress task
-        progress_handle.abort();
-
-        result
+                )
+            },
+            future,
+        )
+        .await
     }
 
     /// Run single file upload with real-time progress tracking
@@ -633,20 +607,15 @@ impl JobHandler {
             None
         };
 
-        // Create shared atomic counter for real-time progress tracking
         let bytes_uploaded = Arc::new(AtomicU64::new(0));
-        let bytes_for_task = bytes_uploaded.clone();
+        let bytes_for_tick = bytes_uploaded.clone();
         let start_time = Instant::now();
 
-        // Spawn a background task for periodic updates using real-time counter
-        let progress_handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(5));
-            ticker.tick().await; // First tick is immediate, skip it
-
-            loop {
-                ticker.tick().await;
-
-                let uploaded = bytes_for_task.load(Ordering::Relaxed);
+        run_with_ticker(
+            publisher,
+            job_relays,
+            move || {
+                let uploaded = bytes_for_tick.load(Ordering::Relaxed);
                 let elapsed = start_time.elapsed().as_secs_f64();
 
                 let percent = if total_bytes > 0 {
@@ -682,45 +651,24 @@ impl JobHandler {
                     format!("{} ({}%)", message, percent)
                 };
 
-                let event = build_status_event_with_eta_encrypted(
+                build_status_event_with_eta_encrypted(
                     job_id,
                     requester,
                     JobStatus::Processing,
                     Some(&progress_msg),
-                    if remaining_secs > 0 {
-                        Some(remaining_secs)
-                    } else {
-                        None
-                    },
+                    if remaining_secs > 0 { Some(remaining_secs) } else { None },
                     encryption_keys.as_ref(),
                     Some(percent),
-                );
-
-                debug!(
-                    job_id = %job_id,
-                    progress = %percent,
-                    eta = %remaining_secs,
-                    speed = %format!("{:.1} MB/s", speed_mbps),
-                    "Sending periodic single-file upload progress update"
-                );
-
-                if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
-                    debug!(error = %e, "Failed to send progress update");
-                }
-            }
-        });
-
-        // Run the upload with real-time progress tracking
-        let result = self
-            .blossom
-            .upload_to_server_streaming_progress(path, mime_type, bytes_uploaded)
-            .await
-            .map_err(DvmError::Blossom);
-
-        // Cancel the progress task
-        progress_handle.abort();
-
-        result
+                )
+            },
+            async {
+                self.blossom
+                    .upload_to_server_streaming_progress(path, mime_type, bytes_uploaded)
+                    .await
+                    .map_err(DvmError::Blossom)
+            },
+        )
+        .await
     }
 
     /// Run HLS upload with adaptive progress tracking based on actual upload speeds
@@ -742,20 +690,16 @@ impl JobHandler {
             None
         };
 
-        // Create shared upload tracker
         let tracker = Arc::new(Mutex::new(UploadTracker::new(total_bytes)));
-        let tracker_for_task = tracker.clone();
+        let tracker_for_tick = tracker.clone();
+        let tracker_for_upload = tracker.clone();
 
-        // Spawn a background task for periodic updates using tracker
-        let progress_handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(5));
-            ticker.tick().await; // First tick is immediate, skip it
-
-            loop {
-                ticker.tick().await;
-
+        run_with_ticker(
+            publisher,
+            job_relays,
+            move || {
                 let (remaining_secs, speed_mbps, percent) = {
-                    let t = tracker_for_task.lock().unwrap();
+                    let t = tracker_for_tick.lock().unwrap();
                     let pct = if t.total_bytes > 0 {
                         ((t.bytes_uploaded as f64 / t.total_bytes as f64) * 100.0) as u32
                     } else {
@@ -776,7 +720,7 @@ impl JobHandler {
                     speed_mbps
                 );
 
-                let event = build_status_event_with_eta_encrypted(
+                build_status_event_with_eta_encrypted(
                     job_id,
                     requester,
                     JobStatus::Processing,
@@ -784,38 +728,21 @@ impl JobHandler {
                     Some(remaining_secs),
                     encryption_keys.as_ref(),
                     Some(percent),
-                );
-
-                debug!(
-                    job_id = %job_id,
-                    progress = %percent,
-                    eta = %remaining_secs,
-                    speed = %format!("{:.1} MB/s", speed_mbps),
-                    "Sending periodic HLS upload progress update"
-                );
-
-                if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
-                    debug!(error = %e, "Failed to send progress update");
-                }
-            }
-        });
-
-        // Run the upload with progress callback
-        let tracker_for_upload = tracker.clone();
-        let result = self
-            .blossom
-            .upload_hls_output_with_progress(transform_result, |bytes, duration| {
-                let mut t = tracker_for_upload.lock().unwrap();
-                t.record_upload(bytes, duration.as_secs_f64());
-            })
-            .await
-            .map_err(DvmError::Blossom);
-
-        // Cancel the progress task
-        progress_handle.abort();
-
-        result
+                )
+            },
+            async {
+                self.blossom
+                    .upload_hls_output_with_progress(transform_result, move |bytes, duration| {
+                        let mut t = tracker_for_upload.lock().unwrap();
+                        t.record_upload(bytes, duration.as_secs_f64());
+                    })
+                    .await
+                    .map_err(DvmError::Blossom)
+            },
+        )
+        .await
     }
+
 
     async fn send_status(
         &self,
@@ -948,6 +875,36 @@ impl JobHandler {
             None
         }
     }
+}
+
+/// Runs an async operation while periodically publishing progress events every 5 seconds.
+///
+/// `make_event` is called every 5 seconds and returns a status event builder to publish.
+async fn run_with_ticker<T, E, F, MakeEvent>(
+    publisher: Arc<EventPublisher>,
+    job_relays: Vec<url::Url>,
+    make_event: MakeEvent,
+    operation: F,
+) -> Result<T, E>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    MakeEvent: Fn() -> EventBuilder + Send + 'static,
+{
+    let progress_handle = tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_secs(5));
+        ticker.tick().await; // First tick is immediate, skip it
+        loop {
+            ticker.tick().await;
+            let event = make_event();
+            if let Err(e) = publisher.publish_for_job(event, &job_relays).await {
+                debug!(error = %e, "Failed to send progress update");
+            }
+        }
+    });
+
+    let result = operation.await;
+    progress_handle.abort();
+    result
 }
 
 /// Format duration in seconds to human-readable string

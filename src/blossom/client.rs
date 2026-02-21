@@ -476,7 +476,7 @@ impl BlossomClient {
 
             // Upload the segment and track timing
             let upload_start = Instant::now();
-            self.upload_file(segment_path, "video/mp4").await.map_err(|e| {
+            self.upload_file(segment_path, "video/iso.segment").await.map_err(|e| {
                 error!(
                     path = %segment_path.display(),
                     error = %e,

@@ -60,7 +60,7 @@ impl AdminHandler {
             .relays()
             .await
             .keys()
-            .map(|url| url.to_string().trim_end_matches('/').to_string())
+            .map(|url| url.as_str().trim_end_matches('/').to_string())
             .collect();
 
         let mut added = false;

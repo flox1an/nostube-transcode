@@ -7,7 +7,7 @@ use tokio::fs;
 use tracing::{debug, info};
 
 use crate::config::Config;
-use crate::dvm::events::{Codec, HlsResolution, Resolution};
+use crate::dvm::events::{Codec, Resolution};
 use crate::error::VideoError;
 use crate::util::TempDir;
 use crate::video::ffmpeg::{FfmpegCommand, FfmpegMp4Command};
@@ -95,7 +95,7 @@ impl TransformConfig {
     /// For 4K (height >= 2160), includes 240p, 360p, 480p, 720p, 1080p (encoded), and 2160p (original).
     /// For smaller inputs, includes 240p, 360p, 480p, 720p, and original resolution.
     pub fn for_resolution(input_height: Option<u32>) -> Self {
-        Self::for_resolutions(input_height, &HlsResolution::all(), None)
+        Self::for_resolutions(input_height, &Resolution::all(), None)
     }
 
     /// Create a transform config based on selected HLS resolutions.
@@ -110,7 +110,7 @@ impl TransformConfig {
     /// - "Original" uses passthrough if source codec is HLS-compatible, else re-encodes
     pub fn for_resolutions(
         input_height: Option<u32>,
-        selected: &[HlsResolution],
+        selected: &[Resolution],
         source_codec: Option<&str>,
     ) -> Self {
         let mut resolutions = HashMap::new();
@@ -123,12 +123,12 @@ impl TransformConfig {
             .unwrap_or(true); // Assume compatible if unknown
 
         // Track if we need to include original
-        let include_original = selected.contains(&HlsResolution::Original);
+        let include_original = selected.contains(&Resolution::Original);
 
         // Add each selected resolution if it's <= input height
         for res in selected {
             match res {
-                HlsResolution::R240p if input_h >= 240 => {
+                Resolution::R240p if input_h >= 240 => {
                     resolutions.insert(
                         "240p".to_string(),
                         ResolutionConfig {
@@ -140,7 +140,7 @@ impl TransformConfig {
                         },
                     );
                 }
-                HlsResolution::R360p if input_h >= 360 => {
+                Resolution::R360p if input_h >= 360 => {
                     resolutions.insert(
                         "360p".to_string(),
                         ResolutionConfig {
@@ -152,7 +152,7 @@ impl TransformConfig {
                         },
                     );
                 }
-                HlsResolution::R480p if input_h >= 480 => {
+                Resolution::R480p if input_h >= 480 => {
                     resolutions.insert(
                         "480p".to_string(),
                         ResolutionConfig {
@@ -164,7 +164,7 @@ impl TransformConfig {
                         },
                     );
                 }
-                HlsResolution::R720p if input_h >= 720 => {
+                Resolution::R720p if input_h >= 720 => {
                     resolutions.insert(
                         "720p".to_string(),
                         ResolutionConfig {
@@ -175,7 +175,7 @@ impl TransformConfig {
                         },
                     );
                 }
-                HlsResolution::R1080p if input_h >= 1080 => {
+                Resolution::R1080p if input_h >= 1080 => {
                     // Only add 1080p as encoded if original is also selected and we're not 4K
                     // For 4K, 1080p is always encoded; for non-4K with original, 1080p is the original
                     if is_4k || !include_original {
@@ -190,7 +190,7 @@ impl TransformConfig {
                         );
                     }
                 }
-                HlsResolution::Original => {
+                Resolution::Original => {
                     // Add original at input resolution
                     let label = if is_4k { "2160p" } else { "1080p" };
                     resolutions.insert(
@@ -320,7 +320,7 @@ impl VideoProcessor {
             input_url,
             input_height,
             codec,
-            &HlsResolution::all(),
+            &Resolution::all(),
             None,
             true,
             progress,
@@ -343,7 +343,7 @@ impl VideoProcessor {
         input_url: &str,
         input_height: Option<u32>,
         codec: Codec,
-        selected_resolutions: &[HlsResolution],
+        selected_resolutions: &[Resolution],
         source_codec: Option<&str>,
         encryption: bool,
         progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
@@ -615,9 +615,9 @@ mod tests {
     #[test]
     fn test_for_resolutions_selected_subset() {
         let selected = vec![
-            HlsResolution::R360p,
-            HlsResolution::R720p,
-            HlsResolution::Original,
+            Resolution::R360p,
+            Resolution::R720p,
+            Resolution::Original,
         ];
         let config = TransformConfig::for_resolutions(Some(1080), &selected, Some("h264"));
 
@@ -633,9 +633,9 @@ mod tests {
     #[test]
     fn test_for_resolutions_incompatible_codec() {
         let selected = vec![
-            HlsResolution::R360p,
-            HlsResolution::R720p,
-            HlsResolution::Original,
+            Resolution::R360p,
+            Resolution::R720p,
+            Resolution::Original,
         ];
         let config = TransformConfig::for_resolutions(Some(1080), &selected, Some("vp9"));
 
@@ -648,11 +648,11 @@ mod tests {
     #[test]
     fn test_for_resolutions_skips_higher_than_input() {
         let selected = vec![
-            HlsResolution::R240p,
-            HlsResolution::R360p,
-            HlsResolution::R720p,
-            HlsResolution::R1080p,
-            HlsResolution::Original,
+            Resolution::R240p,
+            Resolution::R360p,
+            Resolution::R720p,
+            Resolution::R1080p,
+            Resolution::Original,
         ];
         let config = TransformConfig::for_resolutions(Some(480), &selected, None);
 
