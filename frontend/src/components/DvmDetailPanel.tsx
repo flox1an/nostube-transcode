@@ -26,6 +26,7 @@ import { IconClock, IconRefresh, IconCheckCircle, IconXCircle } from "./Icons";
 import "./DvmDetailPanel.css";
 
 type TabType = "overview" | "config" | "transcode" | "system";
+type PublicTabType = "overview" | "transcode";
 
 interface DvmDetailPanelProps {
   dvm: UnifiedDvm;
@@ -42,6 +43,7 @@ function formatBytes(bytes: number): string {
 
 export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>("overview");
+  const [publicTab, setPublicTab] = useState<PublicTabType>("overview");
   const [status, setStatus] = useState<DvmStatus | null>(dvm.status || null);
   const [config, setConfig] = useState<DvmConfig | null>(null);
   const [jobs, setJobs] = useState<DvmJob[]>([]);
@@ -300,7 +302,6 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
     return new Date(ts * 1000).toLocaleString();
   };
 
-  // Public DVM view (not owned)
   if (!dvm.isOwned) {
     return (
       <div className="dvm-detail-panel">
@@ -315,25 +316,121 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
             </div>
           </div>
         </div>
-        <div className="public-dvm-info">
-          <p className="dvm-about">{dvm.about || "No description"}</p>
-          {dvm.supportedModes && (
-            <p><strong>Modes:</strong> {dvm.supportedModes.join(", ")}</p>
+
+        <div className="detail-tabs">
+          <button className={publicTab === "overview" ? "active" : ""} onClick={() => setPublicTab("overview")}>
+            Overview
+          </button>
+          <button className={publicTab === "transcode" ? "active" : ""} onClick={() => setPublicTab("transcode")}>
+            Transcode
+          </button>
+        </div>
+
+        <div className="detail-content">
+          {publicTab === "overview" && (
+            <div className="public-dvm-info">
+              <p className="dvm-about">{dvm.about || "No description"}</p>
+              {dvm.supportedModes && (
+                <p><strong>Modes:</strong> {dvm.supportedModes.join(", ")}</p>
+              )}
+              {dvm.supportedResolutions && (
+                <p><strong>Resolutions:</strong> {dvm.supportedResolutions.join(", ")}</p>
+              )}
+              {dvm.operatorPubkey && (
+                <div className="operator-info">
+                  <span>Operated by:</span>
+                  <UserAvatar pubkey={dvm.operatorPubkey} size={24} />
+                  <UserName pubkey={dvm.operatorPubkey} />
+                </div>
+              )}
+            </div>
           )}
-          {dvm.supportedResolutions && (
-            <p><strong>Resolutions:</strong> {dvm.supportedResolutions.join(", ")}</p>
+
+          {publicTab === "transcode" && (
+            <div className="transcode-tab">
+              <p className="tab-description">
+                Submit a video to this DVM for transcoding.
+              </p>
+
+              <VideoForm
+                onSubmit={handleTranscodeSubmit}
+                disabled={transcodeState === "submitting" || transcodeState === "processing"}
+              />
+
+              {requestEvent && (
+                <EventDisplay
+                  event={requestEvent}
+                  signer={getCurrentSigner()}
+                  dvmPubkey={dvm.pubkey}
+                />
+              )}
+
+              <JobProgress messages={statusMessages} error={transcodeError || undefined} />
+
+              {dvmResult && dvmResult.type === "hls" && (
+                <VideoPlayer src={dvmResult.master_playlist} encryptionKey={dvmResult.encryption_key} />
+              )}
+
+              {dvmResult && dvmResult.type === "mp4" && dvmResult.urls[0] && (
+                <video className="mp4-player" src={dvmResult.urls[0]} controls playsInline />
+              )}
+
+              {responseEvent && (
+                <EventDisplay
+                  event={responseEvent}
+                  title="DVM Response Event"
+                  signer={getCurrentSigner()}
+                  dvmPubkey={dvm.pubkey}
+                />
+              )}
+
+              {dvmResult && (
+                <div className="result-details">
+                  <h3>Result Details</h3>
+                  {dvmResult.type === "hls" && (
+                    <div className="hls-details">
+                      <p className="total-size">
+                        <strong>Total Size:</strong> {formatBytes(dvmResult.total_size_bytes)}
+                      </p>
+                      <table className="stream-table">
+                        <thead>
+                          <tr>
+                            <th>Resolution</th>
+                            <th>Size</th>
+                            <th>Playlist</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dvmResult.stream_playlists.map((stream, i) => (
+                            <tr key={i}>
+                              <td>{stream.resolution}</td>
+                              <td>{formatBytes(stream.size_bytes)}</td>
+                              <td>
+                                <a href={stream.url} target="_blank" rel="noopener noreferrer">View</a>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {dvmResult.type === "mp4" && (
+                    <div className="mp4-details">
+                      <p><strong>Resolution:</strong> {dvmResult.resolution}</p>
+                      <p><strong>File Size:</strong> {formatBytes(dvmResult.size_bytes)}</p>
+                      <p><strong>Servers:</strong> {dvmResult.urls.length}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(transcodeState === "complete" || transcodeState === "error") && (
+                <button className="reset-button" onClick={handleTranscodeReset}>
+                  Transcode Another Video
+                </button>
+              )}
+            </div>
           )}
-          <div className="not-owned-notice">
-            <p>You don't operate this DVM.</p>
-            {dvm.operatorPubkey && (
-              <div className="operator-info">
-                <span>Operated by:</span>
-                <UserAvatar pubkey={dvm.operatorPubkey} size={24} />
-                <UserName pubkey={dvm.operatorPubkey} />
-              </div>
-            )}
-            <p className="switch-notice">Switch to "My DVMs" to manage your own DVMs.</p>
-          </div>
         </div>
       </div>
     );
@@ -378,7 +475,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
           Config
         </button>
         <button className={activeTab === "transcode" ? "active" : ""} onClick={() => setActiveTab("transcode")}>
-          Test Transcode
+          Transcode
         </button>
         <button className={activeTab === "system" ? "active" : ""} onClick={() => setActiveTab("system")}>
           System
@@ -598,9 +695,8 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
         {!loading && activeTab === "transcode" && (
           <div className="transcode-tab">
-            <h3>Test Transcode</h3>
             <p className="tab-description">
-              Submit a test video to this DVM to verify it's working correctly.
+              Submit a video to this DVM for transcoding.
             </p>
 
             <VideoForm
@@ -677,7 +773,7 @@ export function DvmDetailPanel({ dvm, userPubkey }: DvmDetailPanelProps) {
 
             {(transcodeState === "complete" || transcodeState === "error") && (
               <button className="reset-button" onClick={handleTranscodeReset}>
-                Test Another Video
+                Transcode Another Video
               </button>
             )}
           </div>
