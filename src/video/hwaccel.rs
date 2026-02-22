@@ -276,56 +276,59 @@ impl HwAccel {
             }
         }
 
-        // --- Test AV1 VAAPI decoding ---
-        // This probe verifies that FFmpeg can use the VAAPI device for AV1 decoding.
-        // We use a dummy input and try to decode it using av1_vaapi.
-        let av1_result = Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-init_hw_device",
-                &format!("vaapi=vaapi:{}", device),
-                "-filter_hw_device",
-                "vaapi",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=black:s=64x64:d=0.1", // Dummy input source
-                "-vf",
-                "format=nv12,hwupload", // Ensure frames are in VAAPI memory
-                "-c:v",
-                "av1_vaapi", // Explicitly request AV1 VAAPI decoder
-                "-frames:v",
-                "1",
-                "-f",
-                "null",
-                "-",
-            ])
-            .output();
+        // --- Test H.264 VAAPI encoding ---
+        // Fallback probe: if HEVC failed, check if H.264 VAAPI works.
+        // Some GPUs support H.264 but not HEVC encoding.
+        let mut h264_ok = false;
+        if !hevc_ok {
+            let h264_result = Command::new("ffmpeg")
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-init_hw_device",
+                    &format!("vaapi=vaapi:{}", device),
+                    "-filter_hw_device",
+                    "vaapi",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:d=0.1",
+                    "-vf",
+                    "format=nv12,hwupload",
+                    "-c:v",
+                    "h264_vaapi",
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "null",
+                    "-",
+                ])
+                .output();
 
-        let mut av1_ok = false;
-        match av1_result {
-            Ok(output) if output.status.success() => {
-                info!(device = %device, "VAAPI AV1 decoding verified");
-                av1_ok = true;
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!(
-                    device = %device,
-                    stderr = %stderr,
-                    "VAAPI AV1 probe failed"
-                );
-            }
-            Err(e) => {
-                debug!(error = %e, "Failed to run FFmpeg VAAPI AV1 probe");
+            match h264_result {
+                Ok(output) if output.status.success() => {
+                    info!(device = %device, "VAAPI H.264 encoding verified");
+                    h264_ok = true;
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    debug!(
+                        device = %device,
+                        stderr = %stderr,
+                        "VAAPI H.264 probe failed"
+                    );
+                }
+                Err(e) => {
+                    debug!(error = %e, "Failed to run FFmpeg VAAPI H.264 probe");
+                }
             }
         }
 
-        // VAAPI is considered available if either HEVC encoding OR AV1 decoding works.
-        // For N100, AV1 decoding is critical.
-        hevc_ok || av1_ok
+        // VAAPI is considered available if any encoding works.
+        // AV1 decoding is handled automatically by -hwaccel vaapi (falls back to
+        // software libdav1d when hardware AV1 decode is unavailable).
+        hevc_ok || h264_ok
     }
 
     /// Check if Intel QSV is available (Linux)
@@ -453,7 +456,9 @@ impl HwAccel {
     pub fn video_decoder(&self, codec: Codec) -> Option<&'static str> {
         match (self, codec) {
             (Self::Nvenc, Codec::AV1) => Some("av1_cuvid"),
-            (Self::Vaapi, Codec::AV1) => Some("av1_vaapi"),
+            // VAAPI: Don't specify an explicit decoder. -hwaccel vaapi handles
+            // hardware-accelerated decoding automatically, and falls back to
+            // software decoding (e.g., libdav1d for AV1) when HW decode is unavailable.
             _ => None,
         }
     }
