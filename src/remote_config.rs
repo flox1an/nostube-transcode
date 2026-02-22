@@ -57,6 +57,13 @@ pub struct RemoteConfig {
     /// Whether DVM is paused (rejecting new jobs)
     #[serde(default)]
     pub paused: bool,
+    /// Maximum number of concurrent video transformations (default: 1)
+    #[serde(default = "default_max_concurrent_jobs")]
+    pub max_concurrent_jobs: u32,
+}
+
+fn default_max_concurrent_jobs() -> u32 {
+    1
 }
 
 fn default_expiration() -> u32 {
@@ -95,6 +102,7 @@ impl Default for RemoteConfig {
             name: default_name(),
             about: default_about(),
             paused: false,
+            max_concurrent_jobs: default_max_concurrent_jobs(),
         }
     }
 }
@@ -203,6 +211,7 @@ mod tests {
             name: Some("Test DVM".to_string()),
             about: Some("A test DVM".to_string()),
             paused: false,
+            max_concurrent_jobs: 1,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -230,6 +239,7 @@ mod tests {
         assert_eq!(config.name, Some("Video Transcoder DVM".to_string()));
         assert_eq!(config.about, Some("Transforms videos to HLS and MP4 via Blossom".to_string()));
         assert!(!config.paused);
+        assert_eq!(config.max_concurrent_jobs, 1);
     }
 
     #[test]

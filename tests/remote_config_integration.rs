@@ -24,6 +24,7 @@ fn test_config_roundtrip() {
         name: Some("Test DVM".to_string()),
         about: Some("Integration test DVM".to_string()),
         paused: false,
+        max_concurrent_jobs: 1,
     };
 
     // Serialize to JSON
@@ -111,6 +112,7 @@ fn test_admin_response_serialization() {
         name: Some("My DVM".to_string()),
         about: None,
         paused: false,
+        max_concurrent_jobs: 1,
     };
     let config_wire = AdminResponseWire::from_response(
         "req-4".to_string(),

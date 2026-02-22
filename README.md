@@ -2,21 +2,13 @@
 
 A Nostr [Data Vending Machine](https://www.data-vending-machines.org/) that transforms videos into HLS format and uploads them to Blossom servers. Hardware-accelerated encoding with NVIDIA NVENC, Intel QSV/VAAPI, and Apple VideoToolbox.
 
-## Install
+## Quick Start
 
-Download a static binary (Linux x86_64 or macOS Apple Silicon):
+There are two ways to run the DVM: **Docker** (recommended) or **standalone binary**.
 
-```bash
-curl -sSf https://raw.githubusercontent.com/flox1an/nostube-transcode/main/install.sh | bash
-```
+### Option A: Docker
 
-Pin a specific version:
-
-```bash
-VERSION=v0.1.2 curl -sSf https://raw.githubusercontent.com/flox1an/nostube-transcode/main/install.sh | bash
-```
-
-## Quick Start (Docker)
+Best for production deployments. Pre-built images are available for Intel/AMD and NVIDIA GPUs.
 
 **One-liner** (detects GPU, prompts for config, starts everything):
 
@@ -33,12 +25,61 @@ cp .env.example .env
 # Edit .env -- set OPERATOR_NPUB to your npub
 ```
 
-NVIDIA GPU: `docker compose -f docker-compose.nvidia.yml up -d`
-Intel GPU / CPU: `docker compose up -d`
+Then start with the compose file matching your hardware:
+
+| Hardware | Command |
+|---|---|
+| **NVIDIA GPU** | `docker compose -f docker-compose.nvidia.yml up -d` |
+| **Intel GPU** | `docker compose up -d` |
+| **CPU only** | `docker compose up -d` |
 
 Open `http://localhost:5207` to manage your DVM.
 
-> NVIDIA users need the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on the host. See [docs/deployment.md](docs/deployment.md) for full setup instructions.
+#### NVIDIA GPU Requirements (Docker)
+
+1. NVIDIA driver >= 525 on the host
+2. [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed and configured for Docker
+3. Verify with: `nvidia-smi` (should show your GPU)
+
+See [docs/deployment.md](docs/deployment.md) for step-by-step NVIDIA driver and toolkit setup.
+
+#### Intel GPU Requirements (Docker)
+
+The default `docker-compose.yml` passes `/dev/dri` into the container. You may need to adjust the `group_add` GIDs to match your host:
+
+```bash
+getent group video render
+stat -c '%g' /dev/dri/renderD128
+```
+
+### Option B: Standalone Binary
+
+Best for development or systems without Docker. The DVM runs as a single binary with no external dependencies besides FFmpeg.
+
+**Install via script:**
+
+```bash
+curl -sSf https://raw.githubusercontent.com/flox1an/nostube-transcode/main/install.sh | bash
+```
+
+Pin a specific version:
+
+```bash
+VERSION=v0.1.2 curl -sSf https://raw.githubusercontent.com/flox1an/nostube-transcode/main/install.sh | bash
+```
+
+**Or build from source:**
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+OPERATOR_NPUB=npub1... cargo run --release
+```
+
+**Standalone prerequisites:**
+
+- FFmpeg installed with hardware acceleration support for your GPU
+- Verify encoder availability: `ffmpeg -encoders 2>/dev/null | grep -E "nvenc|vaapi|qsv"`
+- For NVIDIA: CUDA toolkit and `libnvidia-encode` must be installed on the host
 
 ## Configuration
 
@@ -48,13 +89,11 @@ The DVM requires one environment variable:
 |---|---|
 | `OPERATOR_NPUB` | **(Required)** Your Nostr pubkey (npub or hex). The DVM only accepts admin commands from this key. |
 
-All other configuration (relays, Blossom servers, profile) is managed remotely via the admin UI or admin commands over Nostr. Config is stored encrypted on Nostr relays using [NIP-78](https://github.com/nostr-protocol/nips/blob/master/78.md).
+All other configuration (relays, Blossom servers, profile, concurrency) is managed remotely via the admin UI or admin commands over Nostr. Config is stored encrypted on Nostr relays using [NIP-78](https://github.com/nostr-protocol/nips/blob/master/78.md).
 
 See [docs/deployment.md](docs/deployment.md) for the full list of optional environment variables.
 
 ### File Locations
-
-The DVM follows the [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) convention on all platforms:
 
 | Path | Purpose | Override |
 |---|---|---|
@@ -62,9 +101,38 @@ The DVM follows the [XDG Base Directory](https://specifications.freedesktop.org/
 | `~/.local/share/nostube-transcode/env` | Environment config (created by installer) | - |
 | `~/.cache/nostube-transcode/` | Temporary ffmpeg working files (auto-cleaned) | `TEMP_DIR` |
 
-Docker deployments use `TEMP_DIR=/app/temp` and can mount the identity key via Docker secrets.
+Docker deployments use `TEMP_DIR=/app/temp` and persist the identity key via a volume mount.
 
-## Running as a Daemon
+## Hardware Acceleration
+
+The DVM auto-detects available GPU hardware at startup and selects the best encoder. Check the logs for which encoder was selected:
+
+```
+Detected NVIDIA GPU, using NVENC hardware acceleration
+Detected VAAPI hardware acceleration
+No hardware acceleration detected, using software encoding
+```
+
+You can also check via the admin UI at `http://localhost:5207` or the `system_info` admin command.
+
+| GPU | Encoder | H.264 | H.265 | AV1 |
+|---|---|---|---|---|
+| NVIDIA GeForce/Quadro | NVENC | Yes | Yes | RTX 40xx+ only |
+| Intel (6th gen+) | VAAPI/QSV | Yes | Yes | 12th gen+ |
+| Apple Silicon | VideoToolbox | Yes | Yes | M3+ |
+| CPU fallback | libx264/x265 | Yes | Yes | Yes (slow) |
+
+### Concurrent Jobs
+
+By default the DVM processes one video at a time. With a powerful GPU you can increase this via the admin UI or the `set_config` command:
+
+```json
+{"id":"1","method":"set_config","params":{"max_concurrent_jobs": 3}}
+```
+
+Note: NVIDIA GeForce cards have an NVENC session limit (max 5 on newer, 3 on older cards). Keep `max_concurrent_jobs` within this limit.
+
+## Running as a Daemon (Standalone)
 
 The installer generates a daemon config for your platform. Enable it to start the DVM automatically on boot and restart on failure.
 
@@ -104,9 +172,10 @@ launchctl unload ~/Library/LaunchAgents/com.nostube.transcode.plist
 ## Features
 
 - Multi-resolution adaptive HLS (240p through 4K)
-- H.264 and H.265 codec support
+- H.264, H.265 and AV1 codec support
 - AES-128 HLS encryption
 - Hardware-accelerated encoding (NVIDIA, Intel, Apple, or software fallback)
+- Configurable concurrent job processing
 - Embedded admin web UI
 - Remote configuration via Nostr (NIP-78)
 - Encrypted admin commands via Nostr (NIP-44)

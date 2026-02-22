@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
@@ -108,17 +108,47 @@ impl JobHandler {
         }
     }
 
-    /// Process incoming jobs from the channel
-    pub async fn run(&self, mut rx: mpsc::Receiver<JobContext>) {
-        info!("Job handler started");
+    /// Process incoming jobs from the channel with configurable concurrency.
+    ///
+    /// Uses a semaphore to limit parallel job execution. The limit is read
+    /// from `RemoteConfig::max_concurrent_jobs` (default: 1 for sequential).
+    pub async fn run(self: Arc<Self>, mut rx: mpsc::Receiver<JobContext>) {
+        // Read initial concurrency limit from config
+        let max_jobs = {
+            let state = self.state.read().await;
+            state.config.max_concurrent_jobs.max(1)
+        };
+        let semaphore = Arc::new(Semaphore::new(max_jobs as usize));
+        info!(max_concurrent_jobs = max_jobs, "Job handler started");
 
         while let Some(job) = rx.recv().await {
-            let job_id = job.event_id();
-            info!(job_id = %job_id, "Processing job");
+            // Acquire a semaphore permit before processing
+            let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-            if let Err(e) = self.handle_job(job).await {
-                error!(job_id = %job_id, error = %e, "Job failed");
-            }
+            let handler = self.clone();
+            tokio::spawn(async move {
+                let job_id = job.event_id();
+                let input_url = job.input.value.clone();
+                info!(job_id = %job_id, "Processing job");
+
+                // Track job start in state
+                handler.state.write().await.job_started(
+                    job_id.to_string(),
+                    input_url,
+                );
+
+                match handler.handle_job(job).await {
+                    Ok(()) => {
+                        // Job completed successfully (result URL already sent in handle_job)
+                    }
+                    Err(e) => {
+                        error!(job_id = %job_id, error = %e, "Job failed");
+                        handler.state.write().await.job_failed(&job_id.to_string());
+                    }
+                }
+
+                drop(permit);
+            });
         }
 
         info!("Job handler stopped");
@@ -219,6 +249,12 @@ impl JobHandler {
             Ok(dvm_result) => {
                 info!(job_id = %job_id, result = ?dvm_result, "Job completed successfully");
 
+                // Extract output URL for state tracking
+                let output_url = match &dvm_result {
+                    DvmResult::Hls(hls) => hls.master_playlist.clone(),
+                    DvmResult::Mp4(mp4) => mp4.urls.first().cloned().unwrap_or_default(),
+                };
+
                 // Send result event (encrypted if request was encrypted)
                 let event = build_result_event_encrypted(
                     job_id,
@@ -235,9 +271,13 @@ impl JobHandler {
                     Some("Video transformation complete"),
                 )
                 .await?;
+
+                // Track job completion in state
+                self.state.write().await.job_completed(&job_id.to_string(), output_url);
             }
             Err(e) => {
                 error!(job_id = %job_id, error = %e, "Video processing failed");
+                self.state.write().await.job_failed(&job_id.to_string());
                 self.send_error(&job, &e.to_string()).await?;
             }
         }

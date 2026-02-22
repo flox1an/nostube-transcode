@@ -97,18 +97,120 @@ impl HwAccel {
     }
 
     /// Check if NVIDIA GPU is available (Linux)
+    /// This runs a quick FFmpeg probe to verify NVENC encoding actually works,
+    /// not just that the device files exist.
     #[cfg(target_os = "linux")]
     fn is_nvidia_available() -> bool {
-        // Check for NVIDIA device
+        // First check for NVIDIA device files
         let nvidia_devices = ["/dev/nvidia0", "/dev/nvidiactl"];
 
-        for device in &nvidia_devices {
-            if Path::new(device).exists() {
-                info!(device = %device, "Found NVIDIA device");
-                return true;
-            }
+        let has_device = nvidia_devices.iter().any(|d| Path::new(d).exists());
+        if !has_device {
+            debug!("No NVIDIA device files found, NVENC unavailable");
+            return false;
         }
 
+        debug!("Found NVIDIA device files, testing NVENC encoding capabilities");
+
+        // --- Test HEVC NVENC encoding ---
+        // This probe verifies that FFmpeg can actually use NVENC for encoding.
+        // Catches cases where device files exist but:
+        // - FFmpeg is not compiled with NVENC support
+        // - NVIDIA driver is too old for NVENC
+        // - libnvidia-encode is missing
+        // - GPU doesn't support NVENC (very old cards)
+        let hevc_result = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-init_hw_device",
+                "cuda=cuda:0",
+                "-filter_hw_device",
+                "cuda",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=0.1",
+                "-vf",
+                "format=nv12,hwupload_cuda",
+                "-c:v",
+                "hevc_nvenc",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output();
+
+        match hevc_result {
+            Ok(output) if output.status.success() => {
+                info!("NVIDIA NVENC HEVC encoding verified");
+                true
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    stderr = %stderr,
+                    "NVENC HEVC probe failed, falling back"
+                );
+                false
+            }
+            Err(e) => {
+                debug!(error = %e, "Failed to run FFmpeg NVENC probe");
+                false
+            }
+        }
+    }
+
+    /// Check if NVIDIA GPU supports AV1 encoding (requires Ada Lovelace / RTX 40xx+)
+    #[cfg(target_os = "linux")]
+    pub fn is_nvenc_av1_available() -> bool {
+        let result = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-init_hw_device",
+                "cuda=cuda:0",
+                "-filter_hw_device",
+                "cuda",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=0.1",
+                "-vf",
+                "format=nv12,hwupload_cuda",
+                "-c:v",
+                "av1_nvenc",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                info!("NVIDIA NVENC AV1 encoding verified (Ada Lovelace+ GPU)");
+                true
+            }
+            Ok(_) => {
+                debug!("NVENC AV1 not available (requires RTX 40xx or newer)");
+                false
+            }
+            Err(e) => {
+                debug!(error = %e, "Failed to run FFmpeg NVENC AV1 probe");
+                false
+            }
+        }
+    }
+
+    /// Check if NVIDIA GPU supports AV1 encoding (non-Linux stub)
+    #[cfg(not(target_os = "linux"))]
+    pub fn is_nvenc_av1_available() -> bool {
         false
     }
 

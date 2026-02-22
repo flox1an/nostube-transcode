@@ -118,8 +118,9 @@ impl AdminHandler {
                 blob_expiration_days,
                 name,
                 about,
+                max_concurrent_jobs,
             } => {
-                self.handle_set_config(relays, blossom_servers, blob_expiration_days, name, about)
+                self.handle_set_config(relays, blossom_servers, blob_expiration_days, name, about, max_concurrent_jobs)
                     .await
             }
             AdminCommand::SelfTest => self.handle_self_test().await,
@@ -139,6 +140,7 @@ impl AdminHandler {
             name: state.config.name.clone(),
             about: state.config.about.clone(),
             paused: state.config.paused,
+            max_concurrent_jobs: state.config.max_concurrent_jobs,
         };
 
         AdminResponse::ok_with_data(ResponseData::Config(ConfigResponse {
@@ -355,6 +357,7 @@ impl AdminHandler {
             name: state.config.name.clone(),
             about: state.config.about.clone(),
             paused: state.config.paused,
+            max_concurrent_jobs: state.config.max_concurrent_jobs,
         };
 
         let history = state.get_job_history(limit as usize);
@@ -393,6 +396,7 @@ impl AdminHandler {
         blob_expiration_days: Option<u32>,
         name: Option<String>,
         about: Option<String>,
+        max_concurrent_jobs: Option<u32>,
     ) -> AdminResponse {
         // Validate relay URLs if provided
         if let Some(ref relays) = relays {
@@ -418,6 +422,12 @@ impl AdminHandler {
             }
         }
 
+        if let Some(jobs) = max_concurrent_jobs {
+            if jobs == 0 {
+                return AdminResponse::error("max_concurrent_jobs must be at least 1");
+            }
+        }
+
         // Connect to new relays before saving so config is published there too
         if let Some(ref r) = relays {
             self.sync_relays(r).await;
@@ -440,6 +450,9 @@ impl AdminHandler {
             }
             if let Some(a) = about {
                 state.config.about = Some(a);
+            }
+            if let Some(j) = max_concurrent_jobs {
+                state.config.max_concurrent_jobs = j;
             }
 
             save_config(&self.client, &state.keys, &state.config).await
@@ -571,7 +584,18 @@ impl AdminHandler {
         let hw_encoders: Vec<HwEncoderInfo> = available_hwaccels
             .into_iter()
             .map(|hw| {
-                let codecs = vec!["H.264".to_string(), "H.265 (HEVC)".to_string()];
+                let mut codecs = vec!["H.264".to_string(), "H.265 (HEVC)".to_string()];
+                // Check AV1 support per encoder type
+                match hw {
+                    HwAccel::Nvenc => {
+                        if HwAccel::is_nvenc_av1_available() {
+                            codecs.push("AV1".to_string());
+                        }
+                    }
+                    _ => {
+                        codecs.push("AV1".to_string());
+                    }
+                }
                 HwEncoderInfo {
                     name: hw.name().to_string(),
                     selected: hw == selected_hwaccel,
