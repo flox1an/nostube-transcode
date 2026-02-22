@@ -134,39 +134,67 @@ Note: NVIDIA GeForce cards have an NVENC session limit (max 5 on newer, 3 on old
 
 ## Running as a Daemon (Standalone)
 
-The installer generates a daemon config for your platform. Enable it to start the DVM automatically on boot and restart on failure.
+The installer generates a daemon config for your platform. By default these are **user-level services** that run while you are logged in. See the sections below to promote them to system services that survive logout.
 
 ### Linux (systemd)
 
 ```bash
+# Start as a user service (runs while logged in)
 systemctl --user enable --now nostube-transcode
-```
 
-```bash
 # Check status / logs
 systemctl --user status nostube-transcode
 journalctl --user -u nostube-transcode -f
+
+# Stop and disable
+systemctl --user disable --now nostube-transcode
+```
+
+To keep the service running after logout (system service):
+
+```bash
+loginctl enable-linger $USER
+```
+
+This tells systemd to start your user services at boot and keep them running regardless of login sessions.
+
+### Linux (SysV init)
+
+For distributions without systemd (e.g., MX Linux, Devuan), the installer generates a SysV init script at `~/.local/share/nostube-transcode/nostube-transcode.initd`. Install it as a system service when ready:
+
+```bash
+sudo cp ~/.local/share/nostube-transcode/nostube-transcode.initd /etc/init.d/nostube-transcode
+sudo update-rc.d nostube-transcode defaults
+sudo service nostube-transcode start
 ```
 
 ```bash
-# Stop and disable
-systemctl --user disable --now nostube-transcode
+# Check status / stop
+sudo service nostube-transcode status
+sudo service nostube-transcode stop
+
+# Remove from boot
+sudo update-rc.d nostube-transcode remove
 ```
 
 ### macOS (launchd)
 
 ```bash
+# Start as a user agent (runs while logged in)
 launchctl load ~/Library/LaunchAgents/com.nostube.transcode.plist
-```
 
-```bash
 # Check logs
 tail -f ~/.local/share/nostube-transcode/stderr.log
-```
 
-```bash
 # Stop
 launchctl unload ~/Library/LaunchAgents/com.nostube.transcode.plist
+```
+
+To run as a system daemon that survives logout, copy the plist to LaunchDaemons:
+
+```bash
+sudo cp ~/Library/LaunchAgents/com.nostube.transcode.plist /Library/LaunchDaemons/
+sudo launchctl load /Library/LaunchDaemons/com.nostube.transcode.plist
 ```
 
 ## Features

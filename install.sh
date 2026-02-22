@@ -201,7 +201,13 @@ setup_daemon() {
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
   case "${os}" in
-    linux)  setup_systemd ;;
+    linux)
+      if pidof systemd &>/dev/null || [ -d /run/systemd/system ]; then
+        setup_systemd
+      else
+        setup_sysvinit
+      fi
+      ;;
     darwin) setup_launchd ;;
   esac
 }
@@ -230,6 +236,80 @@ WantedBy=default.target
 EOF
 
   info "Wrote systemd user service to ${service_file}"
+}
+
+setup_sysvinit() {
+  local init_script="${DATA_DIR}/nostube-transcode.initd"
+  local run_user
+  run_user="$(whoami)"
+
+  cat > "$init_script" << INITEOF
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nostube-transcode
+# Required-Start:    \$network \$remote_fs
+# Required-Stop:     \$network \$remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: nostube-transcode DVM
+# Description:       Nostr Data Vending Machine for video transcoding
+### END INIT INFO
+
+DAEMON="${INSTALL_DIR}/${BINARY_NAME}"
+DAEMON_USER="${run_user}"
+PIDFILE="/var/run/nostube-transcode.pid"
+ENV_FILE="${ENV_FILE}"
+
+# Source environment
+if [ -f "\$ENV_FILE" ]; then
+  set -a
+  . "\$ENV_FILE"
+  set +a
+fi
+
+case "\$1" in
+  start)
+    echo "Starting nostube-transcode..."
+    if [ -f "\$PIDFILE" ] && kill -0 \$(cat "\$PIDFILE") 2>/dev/null; then
+      echo "Already running (pid \$(cat "\$PIDFILE"))"
+      exit 0
+    fi
+    start-stop-daemon --start --background --make-pidfile --pidfile "\$PIDFILE" \\
+      --chuid "\$DAEMON_USER" --exec "\$DAEMON"
+    echo "Started."
+    ;;
+  stop)
+    echo "Stopping nostube-transcode..."
+    if [ -f "\$PIDFILE" ]; then
+      start-stop-daemon --stop --pidfile "\$PIDFILE" --retry 10
+      rm -f "\$PIDFILE"
+      echo "Stopped."
+    else
+      echo "Not running."
+    fi
+    ;;
+  restart)
+    \$0 stop
+    sleep 1
+    \$0 start
+    ;;
+  status)
+    if [ -f "\$PIDFILE" ] && kill -0 \$(cat "\$PIDFILE") 2>/dev/null; then
+      echo "nostube-transcode is running (pid \$(cat "\$PIDFILE"))"
+    else
+      echo "nostube-transcode is not running"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Usage: \$0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+INITEOF
+
+  chmod 755 "$init_script"
+  info "Generated SysV init script at ${init_script}"
 }
 
 setup_launchd() {
@@ -298,9 +378,17 @@ print_summary() {
   fi
 
   if [ "$os" = "linux" ]; then
-    echo "  Run as daemon:"
-    echo "    systemctl --user enable --now nostube-transcode"
-    echo ""
+    if pidof systemd &>/dev/null || [ -d /run/systemd/system ]; then
+      echo "  Run as daemon:"
+      echo "    systemctl --user enable --now nostube-transcode"
+      echo ""
+    else
+      echo "  Install as system service:"
+      echo "    sudo cp ${DATA_DIR}/nostube-transcode.initd /etc/init.d/nostube-transcode"
+      echo "    sudo update-rc.d nostube-transcode defaults"
+      echo "    sudo service nostube-transcode start"
+      echo ""
+    fi
   elif [ "$os" = "darwin" ]; then
     echo "  Run as daemon:"
     echo "    launchctl load ~/Library/LaunchAgents/com.nostube.transcode.plist"
