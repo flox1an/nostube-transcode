@@ -65,6 +65,17 @@ impl Codec {
             Self::AV1 => "AV1",
         }
     }
+
+    /// Infer codec from an FFmpeg encoder name (e.g. "hevc_vaapi" -> H265).
+    pub fn from_encoder(encoder: &str) -> Self {
+        if encoder.contains("hevc") || encoder.contains("265") {
+            Self::H265
+        } else if encoder.contains("av1") || encoder.contains("svtav1") {
+            Self::AV1
+        } else {
+            Self::H264
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -745,5 +756,18 @@ mod tests {
         assert_eq!(all.len(), 6);
         assert!(all.contains(&Resolution::R240p));
         assert!(all.contains(&Resolution::Original));
+    }
+
+    #[test]
+    fn test_codec_from_encoder() {
+        assert_eq!(Codec::from_encoder("hevc_vaapi"), Codec::H265);
+        assert_eq!(Codec::from_encoder("hevc_nvenc"), Codec::H265);
+        assert_eq!(Codec::from_encoder("libx265"), Codec::H265);
+        assert_eq!(Codec::from_encoder("av1_vaapi"), Codec::AV1);
+        assert_eq!(Codec::from_encoder("av1_nvenc"), Codec::AV1);
+        assert_eq!(Codec::from_encoder("libsvtav1"), Codec::AV1);
+        assert_eq!(Codec::from_encoder("h264_vaapi"), Codec::H264);
+        assert_eq!(Codec::from_encoder("h264_nvenc"), Codec::H264);
+        assert_eq!(Codec::from_encoder("libx264"), Codec::H264);
     }
 }

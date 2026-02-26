@@ -8,6 +8,24 @@ use crate::error::VideoError;
 use crate::video::hwaccel::HwAccel;
 use crate::video::transform::TransformConfig;
 
+/// Format a TokioCommand as a copy-pasteable shell command string.
+fn format_cmd(cmd: &TokioCommand) -> String {
+    let std_cmd = cmd.as_std();
+    let program = std_cmd.get_program().to_string_lossy();
+    let args: Vec<String> = std_cmd
+        .get_args()
+        .map(|a| {
+            let s = a.to_string_lossy();
+            if s.contains(' ') || s.contains('\'') || s.contains('"') || s.contains('\\') || s.is_empty() {
+                format!("'{}'", s.replace('\'', "'\\''"))
+            } else {
+                s.into_owned()
+            }
+        })
+        .collect();
+    format!("{} {}", program, args.join(" "))
+}
+
 pub use self::FfmpegMp4Command as Mp4Command;
 
 pub struct FfmpegCommand {
@@ -195,7 +213,7 @@ impl FfmpegCommand {
         let output = self.output_dir.join("stream_%v.m3u8");
         cmd.arg(output);
 
-        debug!(command = ?cmd, hwaccel = %self.hwaccel, "Running FFmpeg");
+        debug!(hwaccel = %self.hwaccel, "\n{}", format_cmd(&cmd));
 
         let mut child = cmd.spawn().map_err(VideoError::Io)?;
 
@@ -248,8 +266,11 @@ impl FfmpegCommand {
 
         // Build the initial filter chain
         // For hardware acceleration that needs explicit frame upload (e.g., QSV when hwaccel_output_format
-        // is not set), prepend the hwupload filter to convert software frames to hardware frames.
-        // This handles cases where hardware decoding falls back to software (e.g., QSV can't decode AV1).
+        // is not set, or NVENC when CUDA can't decode the source), prepend the hwupload filter to
+        // convert software frames to hardware frames.
+        let sw_decode = self
+            .hwaccel
+            .needs_sw_decode(self.source_codec.as_deref());
         let input_chain = if self.hwaccel == HwAccel::Vaapi {
             // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
             // and use hwupload to ensure they are in VAAPI memory before scaling.
@@ -259,12 +280,12 @@ impl FfmpegCommand {
                 non_original.len(),
                 output_labels.join("")
             )
-        } else if self.hwaccel.hwaccel_output_format().is_none() {
+        } else if sw_decode || self.hwaccel.hwaccel_output_format().is_none() {
+            // Software decode path: frames are in CPU memory, need upload to GPU
+            // This covers: QSV (no hwaccel_output_format), NVENC with AV1 SW decode, etc.
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
-                // Upload frames to hardware memory before splitting/scaling
-                // The upload_filter already includes format conversion (e.g., format=nv12 for QSV)
                 format!(
-                    "[0:v]{},split={}{}",
+                    "[0:v]format=nv12,{},split={}{}",
                     upload_filter,
                     non_original.len(),
                     output_labels.join("")
@@ -402,10 +423,9 @@ impl FfmpegCommand {
                     .arg(video_codec);
 
                 // Add hvc1 tag for Safari/iOS compatibility when using H.265
-                if self.codec == Codec::H265
-                    || video_codec.contains("hevc")
-                    || video_codec.contains("265")
-                {
+                // Check the actual encoder name (not requested codec) since VAAPI may
+                // fall back from hevc_vaapi to h264_vaapi if HEVC isn't supported.
+                if video_codec.contains("hevc") || video_codec.contains("265") {
                     cmd.arg(format!("-tag:v:{}", idx)).arg("hvc1");
                 }
 
@@ -419,19 +439,31 @@ impl FfmpegCommand {
                 }
 
                 // Add encoder-specific options (only for first encoded stream to avoid duplicates)
+                // Use actual codec (from encoder name) since VAAPI may fall back to a
+                // different codec than requested (e.g. h264_vaapi when HEVC isn't supported).
                 if idx == 0
                     || !keys
                         .iter()
                         .take(idx)
                         .any(|k| !self.config.resolutions[*k].is_original)
                 {
-                    for (opt, val) in self.hwaccel.encoder_options(self.codec) {
+                    let actual_codec = Codec::from_encoder(video_codec);
+                    for (opt, val) in self.hwaccel.encoder_options(actual_codec) {
                         cmd.arg(opt).arg(val);
                     }
                 }
 
                 if let Some(br) = &res.video_bitrate {
                     cmd.arg(format!("-b:v:{}", idx)).arg(br);
+                }
+
+                // Apply per-resolution bitrate cap for hardware encoders
+                // This prevents NVENC VBR from producing excessively high bitrates
+                if let Some(height) = res.height {
+                    if let Some((maxrate, bufsize)) = self.hwaccel.bitrate_cap(height) {
+                        cmd.arg(format!("-maxrate:v:{}", idx)).arg(maxrate);
+                        cmd.arg(format!("-bufsize:v:{}", idx)).arg(bufsize);
+                    }
                 }
             }
 
@@ -454,8 +486,10 @@ fn apply_hwaccel_input_options(
     cmd: &mut TokioCommand,
     label: &str,
 ) {
-    debug!(hwaccel = ?hwaccel, source_codec = ?source_codec, label = label, "Configuring hardware acceleration input options");
-    // Initialize hardware device for filter graphs
+    let sw_decode = hwaccel.needs_sw_decode(source_codec.as_deref());
+    debug!(hwaccel = ?hwaccel, source_codec = ?source_codec, sw_decode = sw_decode, label = label, "Configuring hardware acceleration input options");
+
+    // Initialize hardware device for filter graphs (always needed for encoding/scaling)
     if let Some(init_device) = hwaccel.init_hw_device() {
         cmd.arg("-init_hw_device").arg(&init_device);
     }
@@ -466,30 +500,33 @@ fn apply_hwaccel_input_options(
     }
 
     // Hardware accelerated decoding
-    if let Some(hwaccel_type) = hwaccel.hwaccel_type() {
-        cmd.arg("-hwaccel").arg(hwaccel_type);
+    // Skip when software decode is needed (e.g., AV1 on NVENC without CUDA AV1 decode)
+    if !sw_decode {
+        if let Some(hwaccel_type) = hwaccel.hwaccel_type() {
+            cmd.arg("-hwaccel").arg(hwaccel_type);
 
-        // Set the hardware device for the decoder
-        if *hwaccel == HwAccel::Vaapi {
-            // For VAAPI, we use the device name initialized in init_hw_device
-            cmd.arg("-hwaccel_device").arg("vaapi");
+            // Set the hardware device for the decoder
+            if *hwaccel == HwAccel::Vaapi {
+                // For VAAPI, we use the device name initialized in init_hw_device
+                cmd.arg("-hwaccel_device").arg("vaapi");
 
-            // Explicitly hint the hardware decoder if we know the source codec
-            if let Some(ref source) = source_codec {
-                let codec = Codec::from_str(source);
-                if let Some(decoder) = hwaccel.video_decoder(codec) {
-                    // Explicitly request hardware decoder (e.g. av1_vaapi)
-                    cmd.arg("-c:v").arg(decoder);
+                // Explicitly hint the hardware decoder if we know the source codec
+                if let Some(ref source) = source_codec {
+                    let codec = Codec::from_str(source);
+                    if let Some(decoder) = hwaccel.video_decoder(codec) {
+                        // Explicitly request hardware decoder (e.g. av1_vaapi)
+                        cmd.arg("-c:v").arg(decoder);
+                    }
                 }
+            } else if let Some(device) = hwaccel.qsv_device() {
+                // QSV-specific device
+                cmd.arg("-qsv_device").arg(device);
             }
-        } else if let Some(device) = hwaccel.qsv_device() {
-            // QSV-specific device
-            cmd.arg("-qsv_device").arg(device);
-        }
 
-        // Keep frames in hardware memory
-        if let Some(output_format) = hwaccel.hwaccel_output_format() {
-            cmd.arg("-hwaccel_output_format").arg(output_format);
+            // Keep frames in hardware memory
+            if let Some(output_format) = hwaccel.hwaccel_output_format() {
+                cmd.arg("-hwaccel_output_format").arg(output_format);
+            }
         }
     }
 
@@ -599,15 +636,17 @@ impl FfmpegMp4Command {
         let scale_filter = self.hwaccel.scale_filter();
 
         // For hardware acceleration that needs explicit frame upload (e.g., QSV when hwaccel_output_format
-        // is not set), prepend the hwupload filter to convert software frames to hardware frames.
-        // This handles cases where hardware decoding falls back to software (e.g., QSV can't decode AV1).
+        // is not set, or NVENC when CUDA can't decode AV1), prepend the hwupload filter.
+        let sw_decode = self
+            .hwaccel
+            .needs_sw_decode(self.source_codec.as_deref());
         let vf = if self.hwaccel == HwAccel::Vaapi {
             // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
             // and use hwupload to ensure they are in VAAPI memory before scaling.
             format!("format=nv12|vaapi,hwupload=extra_hw_frames=64,{}=w=-2:h={}", scale_filter, height)
-        } else if self.hwaccel.hwaccel_output_format().is_none() {
+        } else if sw_decode || self.hwaccel.hwaccel_output_format().is_none() {
             if let Some(upload_filter) = self.hwaccel.upload_filter() {
-                format!("{},{}=w=-2:h={}", upload_filter, scale_filter, height)
+                format!("format=nv12,{},{}=w=-2:h={}", upload_filter, scale_filter, height)
             } else {
                 format!("{}=w=-2:h={}", scale_filter, height)
             }
@@ -621,7 +660,8 @@ impl FfmpegMp4Command {
         cmd.arg("-c:v").arg(encoder);
 
         // Add hvc1 tag for Safari/iOS compatibility (H.265 only)
-        if self.codec == Codec::H265 {
+        // Check actual encoder name since VAAPI may fall back to H.264
+        if encoder.contains("hevc") || encoder.contains("265") {
             cmd.arg("-tag:v").arg("hvc1");
         }
 
@@ -629,9 +669,16 @@ impl FfmpegMp4Command {
         let (quality_param, quality_value) = self.hwaccel.quality_param(self.crf);
         cmd.arg(quality_param).arg(&quality_value);
 
-        // Encoder-specific options
-        for (opt, val) in self.hwaccel.encoder_options(self.codec) {
+        // Encoder-specific options (use actual codec from encoder name for correct profile)
+        let actual_codec = Codec::from_encoder(encoder);
+        for (opt, val) in self.hwaccel.encoder_options(actual_codec) {
             cmd.arg(opt).arg(val);
+        }
+
+        // Apply bitrate cap for hardware encoders
+        if let Some((maxrate, bufsize)) = self.hwaccel.bitrate_cap(height) {
+            cmd.arg("-maxrate").arg(maxrate);
+            cmd.arg("-bufsize").arg(bufsize);
         }
 
         // Audio codec
@@ -646,7 +693,7 @@ impl FfmpegMp4Command {
         // Output file
         cmd.arg(&self.output_path);
 
-        debug!(command = ?cmd, hwaccel = %self.hwaccel, "Running FFmpeg MP4 encoding");
+        debug!(hwaccel = %self.hwaccel, "\n{}", format_cmd(&cmd));
 
         let mut child = cmd.spawn().map_err(VideoError::Io)?;
 

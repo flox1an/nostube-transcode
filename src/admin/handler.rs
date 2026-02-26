@@ -584,15 +584,29 @@ impl AdminHandler {
         let hw_encoders: Vec<HwEncoderInfo> = available_hwaccels
             .into_iter()
             .map(|hw| {
-                let mut codecs = vec!["H.264".to_string(), "H.265 (HEVC)".to_string()];
-                // Check AV1 support per encoder type
+                let mut codecs = vec!["H.264".to_string()];
+                // Check codec support per encoder type
                 match hw {
                     HwAccel::Nvenc => {
+                        codecs.push("H.265 (HEVC)".to_string());
                         if HwAccel::is_nvenc_av1_available() {
                             codecs.push("AV1".to_string());
                         }
                     }
+                    HwAccel::Vaapi => {
+                        if HwAccel::has_vaapi_hevc_encode() {
+                            codecs.push("H.265 (HEVC)".to_string());
+                        }
+                        if HwAccel::is_vaapi_av1_encode_available() {
+                            codecs.push("AV1".to_string());
+                        }
+                    }
+                    HwAccel::Software => {
+                        codecs.push("H.265 (HEVC)".to_string());
+                        codecs.push("AV1".to_string());
+                    }
                     _ => {
+                        codecs.push("H.265 (HEVC)".to_string());
                         codecs.push("AV1".to_string());
                     }
                 }
@@ -623,6 +637,7 @@ impl AdminHandler {
             arch: std::env::consts::ARCH.to_string(),
             hw_encoders,
             gpu,
+            av1_hw_decode: selected_hwaccel.has_av1_hw_decode(),
             disk,
             ffmpeg,
             temp_dir: self.config.temp_dir.to_string_lossy().to_string(),
