@@ -105,6 +105,7 @@ export interface SystemInfoResult {
   arch: string;
   hw_encoders: HwEncoderInfo[];
   gpu?: GpuInfo;
+  av1_hw_decode: boolean;
   disk: DiskInfo;
   ffmpeg: FfmpegInfo;
   temp_dir: string;

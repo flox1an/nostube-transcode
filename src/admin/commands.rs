@@ -424,6 +424,8 @@ pub struct SystemInfoResponse {
     /// GPU information (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu: Option<GpuInfo>,
+    /// Whether AV1 hardware decoding is available
+    pub av1_hw_decode: bool,
     /// Disk space information
     pub disk: DiskInfo,
     /// FFmpeg information

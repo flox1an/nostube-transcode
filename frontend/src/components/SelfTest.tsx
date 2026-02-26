@@ -191,6 +191,15 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
               </div>
             </div>
 
+            <div className="system-info-card">
+              <h4>AV1 Hardware Decode</h4>
+              <div className="info-content">
+                <span className={`info-value ${systemInfo.av1_hw_decode ? "success" : ""}`}>
+                  {systemInfo.av1_hw_decode ? "Available" : "Not available"}
+                </span>
+              </div>
+            </div>
+
             {systemInfo.gpu && (
               <div className="system-info-card">
                 <h4>GPU</h4>

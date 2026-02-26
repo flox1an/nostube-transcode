@@ -164,6 +164,7 @@ pub async fn fetch_config(
 ///
 /// Creates a kind 30078 event with d-tag "video-dvm-config".
 /// Content is NIP-44 encrypted to self.
+/// Only sends to the DVM's configured relays (not index relays).
 pub async fn save_config(
     client: &Client,
     keys: &Keys,
@@ -186,10 +187,21 @@ pub async fn save_config(
         .map_err(|e| RemoteConfigError::RelayError(e.to_string()))?;
 
     let event_id = event.id;
-    client
-        .send_event(event)
-        .await
-        .map_err(|e| RemoteConfigError::RelayError(e.to_string()))?;
+
+    // Only send to DVM operation relays, not index relays
+    let relay_urls = &config.relays;
+    if relay_urls.is_empty() {
+        // Fallback to all relays if no relays configured (e.g., during initial setup)
+        client
+            .send_event(event)
+            .await
+            .map_err(|e| RemoteConfigError::RelayError(e.to_string()))?;
+    } else {
+        client
+            .send_event_to(relay_urls.iter().map(|s| s.as_str()), event)
+            .await
+            .map_err(|e| RemoteConfigError::RelayError(e.to_string()))?;
+    }
 
     tracing::info!("Saved config to relays: {}", event_id);
 

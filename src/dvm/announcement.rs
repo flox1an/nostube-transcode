@@ -93,6 +93,15 @@ pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuild
         ],
     ));
 
+    // Add hardware capability tags
+    tags.push(Tag::custom(
+        TagKind::Custom("capability".into()),
+        vec![
+            "av1_hw_decode".to_string(),
+            if hwaccel.has_av1_hw_decode() { "true" } else { "false" }.to_string(),
+        ],
+    ));
+
     // Add admin/operator tag if configured (NIP-89)
     if let Some(admin) = &config.admin_pubkey {
         tags.push(Tag::custom(

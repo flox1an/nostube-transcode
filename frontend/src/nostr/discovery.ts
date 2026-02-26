@@ -1,6 +1,6 @@
 import type { Event, Filter } from "nostr-tools";
 import { relayPool } from "./core";
-import { RELAYS, KIND_DVM_ANNOUNCEMENT, KIND_DVM_REQUEST, DVM_SERVICE_ID } from "./constants";
+import { RELAYS, INDEX_RELAYS, DEFAULT_DVM_RELAY, KIND_DVM_ANNOUNCEMENT, KIND_DVM_REQUEST, DVM_SERVICE_ID } from "./constants";
 
 /**
  * Represents a discovered DVM service
@@ -70,6 +70,68 @@ function parseAnnouncementEvent(event: Event): DvmService | null {
 }
 
 /**
+ * Fetch NIP-65 relay list (kind 10002) for a given pubkey.
+ * Queries both default RELAYS and INDEX_RELAYS (e.g. purplepag.es).
+ * Returns deduplicated relay URLs, or empty array if not found.
+ */
+export async function fetchDvmRelayList(
+  dvmPubkey: string,
+  timeoutMs: number = 3000
+): Promise<string[]> {
+  const KIND_RELAY_LIST = 10002;
+  const queryRelays = [...new Set([...RELAYS, ...INDEX_RELAYS])];
+
+  const filter: Filter = {
+    kinds: [KIND_RELAY_LIST],
+    authors: [dvmPubkey],
+  };
+
+  console.log("[fetchDvmRelayList] Fetching kind 10002 for", dvmPubkey, "from", queryRelays);
+
+  return new Promise((resolve) => {
+    let best: Event | null = null;
+    let resolved = false;
+
+    const subscription = relayPool.subscription(queryRelays, filter).subscribe({
+      next(response) {
+        if (typeof response === "string") {
+          // EOSE
+          if (!resolved) {
+            resolved = true;
+            subscription.unsubscribe();
+            resolve(parseRelayListEvent(best));
+          }
+          return;
+        }
+
+        const event = response as Event;
+        if (!best || event.created_at > best.created_at) {
+          best = event;
+        }
+      },
+    });
+
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        subscription.unsubscribe();
+        resolve(parseRelayListEvent(best));
+      }
+    }, timeoutMs);
+  });
+}
+
+function parseRelayListEvent(event: Event | null): string[] {
+  if (!event) return [];
+  const relays = event.tags
+    .filter((t) => t[0] === "r")
+    .map((t) => t[1])
+    .filter(Boolean);
+  console.log("[fetchDvmRelayList] Parsed relay list:", relays);
+  return relays;
+}
+
+/**
  * Discover available video transform DVMs
  * Returns a list of DVM services, newest first
  */
@@ -87,7 +149,7 @@ export async function discoverDvms(
   console.log("[DVM Discovery] Current time:", Math.floor(Date.now() / 1000));
   console.log("[DVM Discovery] One hour ago:", Math.floor(Date.now() / 1000) - 3600);
 
-  return new Promise((resolve) => {
+  const discovered: DvmService[] = await new Promise((resolve) => {
     const dvms = new Map<string, DvmService>();
     let resolved = false;
     const oneHourAgo = Math.floor(Date.now() / 1000) - 3600;
@@ -160,6 +222,18 @@ export async function discoverDvms(
       }
     }, timeoutMs);
   });
+
+  // Enrich DVMs with NIP-65 relay lists (combine with announcement relays + default relay, deduplicated)
+  const enriched = await Promise.all(
+    discovered.map(async (dvm) => {
+      const nip65Relays = await fetchDvmRelayList(dvm.pubkey);
+      const combined = [...new Set([DEFAULT_DVM_RELAY, ...dvm.relays, ...nip65Relays])];
+      console.log(`[DVM Discovery] Combined relays for ${dvm.pubkey}:`, combined);
+      return { ...dvm, relays: combined };
+    })
+  );
+
+  return enriched;
 }
 
 /**

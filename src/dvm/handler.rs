@@ -931,7 +931,7 @@ where
     MakeEvent: Fn() -> EventBuilder + Send + 'static,
 {
     let progress_handle = tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(5));
+        let mut ticker = interval(Duration::from_secs(20));
         ticker.tick().await; // First tick is immediate, skip it
         loop {
             ticker.tick().await;

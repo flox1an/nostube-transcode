@@ -12,6 +12,12 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
+/// Get the DVM's configured relay URLs from shared state.
+async fn dvm_relay_urls(state: &SharedDvmState) -> Vec<String> {
+    let state = state.read().await;
+    state.config.relays.clone()
+}
+
 /// Admin RPC event kind (ephemeral range — relays don't store these)
 const ADMIN_RPC_KIND: Kind = Kind::Custom(24207);
 
@@ -78,7 +84,7 @@ pub async fn run_admin_listener(
         .handle_notifications(|notification| async {
             if let RelayPoolNotification::Event { event, .. } = notification {
                 if event.kind == ADMIN_RPC_KIND {
-                    handle_admin_event(&event, &keys, &handler, &client).await;
+                    handle_admin_event(&event, &keys, &handler, &client, &state).await;
                 }
             }
             Ok(false) // Continue listening
@@ -92,6 +98,7 @@ async fn handle_admin_event(
     keys: &Keys,
     handler: &AdminHandler,
     client: &Client,
+    state: &SharedDvmState,
 ) {
     // Decrypt NIP-44 content
     let content = match nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
@@ -132,7 +139,7 @@ async fn handle_admin_event(
                 error: Some(e),
             };
             if let Ok(json) = serde_json::to_string(&wire) {
-                if let Err(e) = send_admin_response(client, keys, &event.pubkey, &json).await {
+                if let Err(e) = send_admin_response(client, keys, &event.pubkey, &json, state).await {
                     error!("Failed to send error response: {}", e);
                 }
             }
@@ -154,7 +161,7 @@ async fn handle_admin_event(
     };
 
     // Encrypt and send reply
-    if let Err(e) = send_admin_response(client, keys, &event.pubkey, &response_json).await {
+    if let Err(e) = send_admin_response(client, keys, &event.pubkey, &response_json, state).await {
         error!("Failed to send response: {}", e);
     }
 }
@@ -164,6 +171,7 @@ async fn send_admin_response(
     keys: &Keys,
     recipient: &PublicKey,
     content: &str,
+    state: &SharedDvmState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let encrypted = nip44::encrypt(
         keys.secret_key(),
@@ -175,7 +183,11 @@ async fn send_admin_response(
     let tags = vec![Tag::public_key(*recipient)];
     let event = EventBuilder::new(ADMIN_RPC_KIND, encrypted, tags).to_event(keys)?;
 
-    client.send_event(event).await?;
+    // Only send to DVM operation relays, not index relays like purplepag.es
+    let relays = dvm_relay_urls(state).await;
+    client
+        .send_event_to(relays.iter().map(|s| s.as_str()), event)
+        .await?;
 
     Ok(())
 }
