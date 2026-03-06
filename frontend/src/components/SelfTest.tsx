@@ -324,7 +324,8 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
               <thead>
                 <tr>
                   <th>Clip</th>
-                  <th>Output Codec</th>
+                  <th>Output</th>
+                  <th>HW</th>
                   <th>Status</th>
                   <th>Speed</th>
                   <th>Time</th>
@@ -339,7 +340,8 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
                       onClick={() => toggleRow(i)}
                     >
                       <td>{entry.clip_name}</td>
-                      <td><code>{entry.output_codec}</code></td>
+                      <td><code>{entry.output_codec}</code> <code>{entry.output_resolution}</code></td>
+                      <td>{entry.hw_accelerated ? "Yes" : "No"}</td>
                       <td>
                         <span className={`result-badge ${entry.passed ? "success" : "failure"}`}>
                           {entry.passed ? "PASS" : "FAIL"}
@@ -350,7 +352,7 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
                     </tr>
                     {expandedRows.has(i) && (
                       <tr key={`detail-${i}`} className="detail-row">
-                        <td colSpan={5}>
+                        <td colSpan={6}>
                           {entry.error && (
                             <p className="error-message">{entry.error}</p>
                           )}

@@ -481,7 +481,9 @@ impl AdminHandler {
             .map(|r| SelfTestResultEntry {
                 clip_name: r.clip_name,
                 output_codec: r.output_codec,
+                output_resolution: r.output_resolution,
                 hwaccel: r.hwaccel,
+                hw_accelerated: r.hw_accelerated,
                 passed: r.passed,
                 checks: r.checks.into_iter().map(|c| SelfTestCheck {
                     name: c.name,

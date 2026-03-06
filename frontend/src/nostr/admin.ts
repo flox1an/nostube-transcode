@@ -72,7 +72,9 @@ export interface SelfTestCheck {
 export interface SelfTestResultEntry {
   clip_name: string;
   output_codec: string;
+  output_resolution: string;
   hwaccel: string;
+  hw_accelerated: boolean;
   passed: boolean;
   checks: SelfTestCheck[];
   encode_time_secs: number;

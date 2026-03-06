@@ -407,7 +407,9 @@ pub struct SelfTestSuiteResponse {
 pub struct SelfTestResultEntry {
     pub clip_name: String,
     pub output_codec: String,
+    pub output_resolution: String,
     pub hwaccel: String,
+    pub hw_accelerated: bool,
     pub passed: bool,
     pub checks: Vec<SelfTestCheck>,
     pub encode_time_secs: f64,

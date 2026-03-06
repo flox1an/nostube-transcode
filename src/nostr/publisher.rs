@@ -115,12 +115,14 @@ impl EventPublisher {
         }
 
         for attempt in 1..=MAX_RETRIES {
+            let start = std::time::Instant::now();
             match self
                 .client
                 .send_event_to(relay_urls.iter().map(|s| s.as_str()), event.clone())
                 .await
             {
                 Ok(output) => {
+                    let elapsed = start.elapsed();
                     debug!(
                         event_id = %event_id,
                         kind = %event_kind,
@@ -128,8 +130,30 @@ impl EventPublisher {
                         failed = ?output.failed.iter().map(|(u, _)| u.to_string()).collect::<Vec<_>>(),
                         success_count = output.success.len(),
                         failed_count = output.failed.len(),
+                        elapsed_ms = elapsed.as_millis(),
                         "Event published"
                     );
+
+                    // Log slow/failed relays at warn level for easy identification
+                    for (url, err) in &output.failed {
+                        warn!(
+                            relay = %url,
+                            error = ?err,
+                            kind = %event_kind,
+                            "Relay publish failed"
+                        );
+                    }
+
+                    if elapsed.as_secs() >= 5 {
+                        warn!(
+                            event_id = %event_id,
+                            kind = %event_kind,
+                            elapsed_ms = elapsed.as_millis(),
+                            relay_count = relay_urls.len(),
+                            "Slow publish: send_event_to took >= 5s (a slow relay may be blocking)"
+                        );
+                    }
+
                     return Ok(event_id);
                 }
                 Err(e) => {

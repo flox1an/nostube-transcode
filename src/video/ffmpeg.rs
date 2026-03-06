@@ -254,7 +254,6 @@ impl FfmpegCommand {
         }
 
         let mut parts = Vec::new();
-        let scale_filter = self.hwaccel.scale_filter();
 
         // Split filter - only for non-original resolutions
         // Original stream will be mapped directly from input (0:v) to allow stream copy
@@ -271,6 +270,15 @@ impl FfmpegCommand {
         let sw_decode = self
             .hwaccel
             .needs_sw_decode(self.source_codec.as_deref());
+
+        // When VideoToolbox needs software decode (e.g., AV1 on M1/M2), frames are in CPU
+        // memory and scale_vt won't work — fall back to CPU "scale" filter.
+        let scale_filter = if sw_decode && self.hwaccel == HwAccel::VideoToolbox {
+            "scale"
+        } else {
+            self.hwaccel.scale_filter()
+        };
+
         let input_chain = if self.hwaccel == HwAccel::Vaapi {
             // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
             // and use hwupload to ensure they are in VAAPI memory before scaling.
@@ -633,13 +641,20 @@ impl FfmpegMp4Command {
         // Scale filter using appropriate hardware filter
         // Use -2 for width to auto-calculate while preserving aspect ratio (and ensuring even dimensions)
         let (_width, height) = self.resolution.dimensions().unwrap_or((1280, 720));
-        let scale_filter = self.hwaccel.scale_filter();
 
         // For hardware acceleration that needs explicit frame upload (e.g., QSV when hwaccel_output_format
         // is not set, or NVENC when CUDA can't decode AV1), prepend the hwupload filter.
         let sw_decode = self
             .hwaccel
             .needs_sw_decode(self.source_codec.as_deref());
+
+        // When VideoToolbox needs software decode (e.g., AV1 on M1/M2), frames are in CPU
+        // memory and scale_vt won't work — fall back to CPU "scale" filter.
+        let scale_filter = if sw_decode && self.hwaccel == HwAccel::VideoToolbox {
+            "scale"
+        } else {
+            self.hwaccel.scale_filter()
+        };
         let vf = if self.hwaccel == HwAccel::Vaapi {
             // For VAAPI, we accept both vaapi (from HW decode) and nv12 (from SW decode fallback)
             // and use hwupload to ensure they are in VAAPI memory before scaling.

@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::dvm::events::{Codec, Resolution};
 use crate::selftest::validate::*;
 use crate::selftest::{clips_for_mode, TestClip, TestMode};
+use crate::video::hwaccel::HwAccel;
 use crate::video::{VideoMetadata, VideoProcessor};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -13,7 +14,9 @@ use tracing::{error, info};
 pub struct TestResult {
     pub clip_name: String,
     pub output_codec: String,
+    pub output_resolution: String,
     pub hwaccel: String,
+    pub hw_accelerated: bool,
     pub passed: bool,
     pub checks: Vec<Check>,
     pub encode_time_secs: f64,
@@ -82,12 +85,15 @@ pub async fn run_test_suite(config: Arc<Config>, mode: TestMode) -> TestSuiteRes
         }
         None => {
             info!("test-videos directory not found, skipping all clips");
+            let hw_accelerated = hwaccel != HwAccel::Software;
             let results: Vec<TestResult> = clips
                 .iter()
                 .map(|clip| TestResult {
                     clip_name: clip.name.to_string(),
                     output_codec: String::new(),
+                    output_resolution: String::new(),
                     hwaccel: hwaccel_str.clone(),
+                    hw_accelerated,
                     passed: false,
                     checks: Vec::new(),
                     encode_time_secs: 0.0,
@@ -111,22 +117,14 @@ pub async fn run_test_suite(config: Arc<Config>, mode: TestMode) -> TestSuiteRes
         }
     };
 
-    // Determine output codecs based on mode
+    // Determine output codecs and target resolutions based on mode
     let output_codecs: Vec<Codec> = match mode {
         TestMode::Quick => vec![Codec::H265],
-        TestMode::Full => {
-            let mut codecs = vec![Codec::H264, Codec::H265];
-            let av1_encoder = hwaccel.video_encoder(Codec::AV1);
-            if av1_encoder.contains("av1") {
-                codecs.push(Codec::AV1);
-            } else {
-                info!(
-                    encoder = av1_encoder,
-                    "AV1 encoder not available (fell back to {}), skipping AV1 tests", av1_encoder
-                );
-            }
-            codecs
-        }
+        TestMode::Full => vec![Codec::H264, Codec::H265],
+    };
+    let target_resolutions: Vec<Resolution> = match mode {
+        TestMode::Quick => vec![Resolution::R720p],
+        TestMode::Full => vec![Resolution::R360p, Resolution::R720p],
     };
 
     let mut results = Vec::new();
@@ -136,16 +134,20 @@ pub async fn run_test_suite(config: Arc<Config>, mode: TestMode) -> TestSuiteRes
         if !clip_path.exists() {
             info!(clip = clip.name, file = clip.filename, "Clip file not found, skipping");
             for codec in &output_codecs {
-                results.push(TestResult {
-                    clip_name: clip.name.to_string(),
-                    output_codec: codec.as_str().to_string(),
-                    hwaccel: hwaccel_str.clone(),
-                    passed: false,
-                    checks: Vec::new(),
-                    encode_time_secs: 0.0,
-                    speed_ratio: 0.0,
-                    error: Some(format!("Clip file not found: {}", clip.filename)),
-                });
+                for res in &target_resolutions {
+                    results.push(TestResult {
+                        clip_name: clip.name.to_string(),
+                        output_codec: codec.as_str().to_string(),
+                        output_resolution: res.as_str().to_string(),
+                        hwaccel: hwaccel_str.clone(),
+                        hw_accelerated: hwaccel != HwAccel::Software,
+                        passed: false,
+                        checks: Vec::new(),
+                        encode_time_secs: 0.0,
+                        speed_ratio: 0.0,
+                        error: Some(format!("Clip file not found: {}", clip.filename)),
+                    });
+                }
             }
             continue;
         }
@@ -162,24 +164,41 @@ pub async fn run_test_suite(config: Arc<Config>, mode: TestMode) -> TestSuiteRes
         };
 
         for codec in &output_codecs {
-            let result = run_single_test(
-                &processor,
-                &config,
-                clip,
-                &clip_url,
-                *codec,
-                source_duration,
-                &hwaccel_str,
-            )
-            .await;
-            info!(
-                clip = clip.name,
-                codec = codec.as_str(),
-                passed = result.passed,
-                time = format!("{:.1}s", result.encode_time_secs),
-                "Test completed"
-            );
-            results.push(result);
+            for res in &target_resolutions {
+                // Skip resolutions larger than or equal to the source
+                let target_height = res.height().unwrap_or(0);
+                if target_height >= clip.expected_height {
+                    info!(
+                        clip = clip.name,
+                        codec = codec.as_str(),
+                        resolution = res.as_str(),
+                        source_height = clip.expected_height,
+                        "Skipping resolution >= source height"
+                    );
+                    continue;
+                }
+
+                let result = run_single_test(
+                    &processor,
+                    &config,
+                    clip,
+                    &clip_url,
+                    *codec,
+                    *res,
+                    source_duration,
+                    hwaccel,
+                )
+                .await;
+                info!(
+                    clip = clip.name,
+                    codec = codec.as_str(),
+                    resolution = res.as_str(),
+                    passed = result.passed,
+                    time = format!("{:.1}s", result.encode_time_secs),
+                    "Test completed"
+                );
+                results.push(result);
+            }
         }
     }
 
@@ -208,17 +227,21 @@ async fn run_single_test(
     clip: &TestClip,
     clip_url: &str,
     output_codec: Codec,
+    output_resolution: Resolution,
     source_duration: f64,
-    hwaccel_str: &str,
+    hwaccel: HwAccel,
 ) -> TestResult {
     let start = Instant::now();
 
     let source_codec_str = clip.expected_codec;
+    let target_height = output_resolution.height().unwrap_or(720);
+    let hwaccel_str = hwaccel.to_string();
+    let hw_accelerated = hwaccel != HwAccel::Software;
 
     let transform_result = processor
         .transform_mp4(
             clip_url,
-            Resolution::R720p,
+            output_resolution,
             Some(28),
             output_codec,
             Some(source_codec_str),
@@ -252,8 +275,8 @@ async fn run_single_test(
             .await
             {
                 Ok(out_meta) => {
-                    // 2. Resolution check (720p max height)
-                    checks.push(check_resolution(&out_meta, 720));
+                    // 2. Resolution check
+                    checks.push(check_resolution(&out_meta, target_height));
 
                     // 3. Codec check
                     checks.push(check_codec(&out_meta, output_codec.as_str()));
@@ -284,7 +307,9 @@ async fn run_single_test(
             TestResult {
                 clip_name: clip.name.to_string(),
                 output_codec: output_codec.as_str().to_string(),
-                hwaccel: hwaccel_str.to_string(),
+                output_resolution: output_resolution.as_str().to_string(),
+                hwaccel: hwaccel_str.clone(),
+                hw_accelerated,
                 passed,
                 checks,
                 encode_time_secs: encode_time,
@@ -296,13 +321,16 @@ async fn run_single_test(
             error!(
                 clip = clip.name,
                 codec = output_codec.as_str(),
+                resolution = output_resolution.as_str(),
                 error = %e,
                 "Transform failed"
             );
             TestResult {
                 clip_name: clip.name.to_string(),
                 output_codec: output_codec.as_str().to_string(),
-                hwaccel: hwaccel_str.to_string(),
+                output_resolution: output_resolution.as_str().to_string(),
+                hwaccel: hwaccel_str.clone(),
+                hw_accelerated,
                 passed: false,
                 checks: Vec::new(),
                 encode_time_secs: encode_time,
