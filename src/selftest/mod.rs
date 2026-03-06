@@ -24,7 +24,7 @@ pub enum TestMode {
 }
 
 impl TestMode {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_mode(s: &str) -> Option<Self> {
         match s {
             "quick" => Some(Self::Quick),
             "full" => Some(Self::Full),

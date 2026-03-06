@@ -466,7 +466,7 @@ impl AdminHandler {
     async fn handle_self_test(&self, mode_str: &str) -> AdminResponse {
         info!(mode = mode_str, "Starting self-test suite");
 
-        let mode = crate::selftest::TestMode::from_str(mode_str)
+        let mode = crate::selftest::TestMode::parse_mode(mode_str)
             .unwrap_or(crate::selftest::TestMode::Quick);
         let suite_result = crate::selftest::runner::run_test_suite(
             self.config.clone(),

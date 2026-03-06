@@ -7,3 +7,6 @@ target/
 # Docker compose local directories
 data/
 temp/
+
+# Test video fixtures - real clips downloaded on demand
+test-videos/real-*
