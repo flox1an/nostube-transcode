@@ -5,22 +5,15 @@
 
 use crate::admin::commands::*;
 use crate::config::Config;
-use crate::dvm::events::{Codec, Resolution};
 use crate::dvm_state::SharedDvmState;
 use crate::remote_config::save_config;
 use crate::video::hwaccel::HwAccel;
-use crate::video::{VideoMetadata, VideoProcessor};
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Notify;
-use tracing::{error, info};
-
-/// Test video URL for self-test
-const TEST_VIDEO_URL: &str =
-    "https://almond.slidestr.net/ecf8f3a25b4a6109c5aa6ea90ee97f8cafec09f99a2f71f0e6253c3bdf26ccea";
+use tracing::info;
 
 /// Handles admin commands for the DVM.
 pub struct AdminHandler {
@@ -123,7 +116,7 @@ impl AdminHandler {
                 self.handle_set_config(relays, blossom_servers, blob_expiration_days, name, about, max_concurrent_jobs)
                     .await
             }
-            AdminCommand::SelfTest => self.handle_self_test().await,
+            AdminCommand::SelfTest { mode } => self.handle_self_test(&mode).await,
             AdminCommand::SystemInfo => self.handle_system_info().await,
             AdminCommand::ImportEnvConfig => self.handle_import_env_config().await,
         }
@@ -469,106 +462,52 @@ impl AdminHandler {
 
     /// Handles the SelfTest command.
     ///
-    /// Encodes a short test video and returns performance metrics.
-    async fn handle_self_test(&self) -> AdminResponse {
-        info!("Starting self-test with video: {}", TEST_VIDEO_URL);
+    /// Runs the multi-clip self-test suite and returns results.
+    async fn handle_self_test(&self, mode_str: &str) -> AdminResponse {
+        info!(mode = mode_str, "Starting self-test suite");
 
-        let resolution = Resolution::R720p;
+        let mode = crate::selftest::TestMode::from_str(mode_str)
+            .unwrap_or(crate::selftest::TestMode::Quick);
+        let suite_result = crate::selftest::runner::run_test_suite(
+            self.config.clone(),
+            mode,
+        )
+        .await;
 
-        // Get video metadata to determine duration
-        let metadata = match VideoMetadata::extract(TEST_VIDEO_URL, &self.config.ffprobe_path).await
-        {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to extract metadata: {}", e);
-                return AdminResponse::ok_with_data(ResponseData::SelfTest(SelfTestResponse {
-                    success: false,
-                    video_duration_secs: None,
-                    encode_time_secs: None,
-                    speed_ratio: None,
-                    speed_description: None,
-                    hwaccel: None,
-                    resolution: Some(resolution.as_str().to_string()),
-                    output_size_bytes: None,
-                    error: Some(format!("Failed to extract metadata: {}", e)),
-                }));
-            }
+        // Convert runner types to command types
+        let results: Vec<SelfTestResultEntry> = suite_result
+            .results
+            .into_iter()
+            .map(|r| SelfTestResultEntry {
+                clip_name: r.clip_name,
+                output_codec: r.output_codec,
+                hwaccel: r.hwaccel,
+                passed: r.passed,
+                checks: r.checks.into_iter().map(|c| SelfTestCheck {
+                    name: c.name,
+                    passed: c.passed,
+                    detail: c.detail,
+                }).collect(),
+                encode_time_secs: r.encode_time_secs,
+                speed_ratio: r.speed_ratio,
+                error: r.error,
+            })
+            .collect();
+
+        let response = SelfTestSuiteResponse {
+            hwaccel: suite_result.hwaccel,
+            mode: suite_result.mode,
+            results,
+            summary: SelfTestSummary {
+                total: suite_result.summary.total,
+                passed: suite_result.summary.passed,
+                failed: suite_result.summary.failed,
+                skipped: suite_result.summary.skipped,
+                duration_secs: suite_result.summary.duration_secs,
+            },
         };
 
-        let video_duration = metadata.duration_secs().unwrap_or(0.0);
-        info!(duration_secs = video_duration, "Video metadata extracted");
-
-        // Create video processor
-        let processor = VideoProcessor::new(self.config.clone());
-        let hwaccel = processor.hwaccel();
-
-        // Time the encoding
-        let start = Instant::now();
-
-        let result = match processor
-            .transform_mp4(TEST_VIDEO_URL, resolution, Some(23), Codec::default(), None, None, None)
-            .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Self-test encoding failed: {}", e);
-                return AdminResponse::ok_with_data(ResponseData::SelfTest(SelfTestResponse {
-                    success: false,
-                    video_duration_secs: Some(video_duration),
-                    encode_time_secs: Some(start.elapsed().as_secs_f64()),
-                    speed_ratio: None,
-                    speed_description: None,
-                    hwaccel: Some(hwaccel.to_string()),
-                    resolution: Some(resolution.as_str().to_string()),
-                    output_size_bytes: None,
-                    error: Some(format!("Encoding failed: {}", e)),
-                }));
-            }
-        };
-
-        let encode_time = start.elapsed().as_secs_f64();
-        let speed_ratio = if encode_time > 0.0 {
-            video_duration / encode_time
-        } else {
-            0.0
-        };
-
-        let speed_description = if speed_ratio >= 1.0 {
-            format!("{:.1}x realtime (faster than realtime)", speed_ratio)
-        } else if speed_ratio > 0.0 {
-            format!("{:.1}x realtime (slower than realtime)", speed_ratio)
-        } else {
-            "N/A".to_string()
-        };
-
-        // Get output file size
-        let output_size_bytes = tokio::fs::metadata(&result.output_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        info!(
-            encode_time_secs = encode_time,
-            speed_ratio = speed_ratio,
-            output_size_bytes = output_size_bytes,
-            hwaccel = %hwaccel,
-            "Self-test complete"
-        );
-
-        // Cleanup temp files
-        result.cleanup().await;
-
-        AdminResponse::ok_with_data(ResponseData::SelfTest(SelfTestResponse {
-            success: true,
-            video_duration_secs: Some(video_duration),
-            encode_time_secs: Some(encode_time),
-            speed_ratio: Some(speed_ratio),
-            speed_description: Some(speed_description),
-            hwaccel: Some(hwaccel.to_string()),
-            resolution: Some(resolution.as_str().to_string()),
-            output_size_bytes: Some(output_size_bytes),
-            error: None,
-        }))
+        AdminResponse::ok_with_data(ResponseData::SelfTest(response))
     }
 
     /// Handles the SystemInfo command.

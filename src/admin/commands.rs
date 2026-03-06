@@ -55,7 +55,10 @@ pub enum AdminCommand {
         max_concurrent_jobs: Option<u32>,
     },
     /// Run self-test (encode a short video)
-    SelfTest,
+    SelfTest {
+        #[serde(default = "default_selftest_mode")]
+        mode: String,
+    },
     /// Get system information (hardware, GPU, disk, FFmpeg)
     SystemInfo,
     /// Import configuration from environment variables
@@ -64,6 +67,10 @@ pub enum AdminCommand {
 
 fn default_job_history_limit() -> u32 {
     20
+}
+
+fn default_selftest_mode() -> String {
+    "quick".to_string()
 }
 
 /// Wire format for incoming admin requests (NIP-46-style RPC).
@@ -162,7 +169,13 @@ impl AdminRequest {
                     max_concurrent_jobs,
                 })
             }
-            "self_test" => Ok(AdminCommand::SelfTest),
+            "self_test" => {
+                let mode = self.params.get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("quick")
+                    .to_string();
+                Ok(AdminCommand::SelfTest { mode })
+            }
             "system_info" => Ok(AdminCommand::SystemInfo),
             "import_env_config" => Ok(AdminCommand::ImportEnvConfig),
             _ => Err(format!("unknown method: {}", self.method)),
@@ -289,7 +302,7 @@ pub enum ResponseData {
     /// Job history data
     JobHistory(JobHistoryResponse),
     /// Self-test results
-    SelfTest(SelfTestResponse),
+    SelfTest(SelfTestSuiteResponse),
     /// System information
     SystemInfo(SystemInfoResponse),
 }
@@ -381,35 +394,42 @@ pub struct JobInfo {
     pub duration_secs: Option<u64>,
 }
 
-/// Self-test response data.
+/// Self-test suite response (multi-clip).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SelfTestResponse {
-    /// Whether the self-test passed
-    pub success: bool,
-    /// Duration of test video in seconds
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub video_duration_secs: Option<f64>,
-    /// Encode time in seconds
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encode_time_secs: Option<f64>,
-    /// Speed ratio (video duration / encode time)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speed_ratio: Option<f64>,
-    /// Human-readable speed description
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speed_description: Option<String>,
-    /// Hardware acceleration used
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hwaccel: Option<String>,
-    /// Resolution tested
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolution: Option<String>,
-    /// Output file size in bytes
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_size_bytes: Option<u64>,
-    /// Error message if test failed
+pub struct SelfTestSuiteResponse {
+    pub hwaccel: String,
+    pub mode: String,
+    pub results: Vec<SelfTestResultEntry>,
+    pub summary: SelfTestSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelfTestResultEntry {
+    pub clip_name: String,
+    pub output_codec: String,
+    pub hwaccel: String,
+    pub passed: bool,
+    pub checks: Vec<SelfTestCheck>,
+    pub encode_time_secs: f64,
+    pub speed_ratio: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelfTestCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelfTestSummary {
+    pub total: u32,
+    pub passed: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub duration_secs: f64,
 }
 
 /// System information response data.

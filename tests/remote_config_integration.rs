@@ -215,7 +215,7 @@ fn test_admin_command_parsing() {
     ));
 
     // SelfTest
-    assert_eq!(parse_cmd("self_test", "{}"), AdminCommand::SelfTest);
+    assert_eq!(parse_cmd("self_test", "{}"), AdminCommand::SelfTest { mode: "quick".to_string() });
 
     // SystemInfo
     assert_eq!(parse_cmd("system_info", "{}"), AdminCommand::SystemInfo);
