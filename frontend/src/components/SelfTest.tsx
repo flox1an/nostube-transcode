@@ -4,7 +4,9 @@ import {
   sendAdminCommand,
   subscribeToAdminResponses,
   type AdminResponseWire,
-  type SelfTestResult,
+  type SelfTestSuiteResult,
+  type SelfTestResultEntry,
+  type SelfTestCheck,
   type SystemInfoResult,
   type HwEncoderInfo,
   type GpuInfo,
@@ -36,14 +38,28 @@ function formatDuration(secs: number): string {
 
 export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
   const [isRunning, setIsRunning] = useState(false);
-  const [result, setResult] = useState<SelfTestResult | null>(null);
+  const [mode, setMode] = useState<"quick" | "full">("quick");
+  const [result, setResult] = useState<SelfTestSuiteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [systemInfo, setSystemInfo] = useState<SystemInfoResult | null>(null);
   const [systemInfoLoading, setSystemInfoLoading] = useState(true);
   const [systemInfoError, setSystemInfoError] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
   const subscriptionRef = useRef<(() => void) | null>(null);
   const pendingCommandRef = useRef<"system_info" | "self_test" | null>(null);
+
+  const toggleRow = (index: number) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
 
   const handleResponse = useCallback((response: AdminResponseWire) => {
     if (response.error) {
@@ -62,10 +78,11 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
         pendingCommandRef.current = null;
       }
     }
-    // Check if this is a self_test response
-    else if ("success" in data && ("speed_ratio" in data || "error" in data)) {
-      setResult(data as unknown as SelfTestResult);
+    // Check if this is a self_test suite response
+    else if ("summary" in data && "results" in data) {
+      setResult(data as unknown as SelfTestSuiteResult);
       setIsRunning(false);
+      setExpandedRows(new Set());
       if (pendingCommandRef.current === "self_test") {
         pendingCommandRef.current = null;
       }
@@ -128,25 +145,27 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
     setIsRunning(true);
     setResult(null);
     setError(null);
+    setExpandedRows(new Set());
     pendingCommandRef.current = "self_test";
 
-    try {
-      await sendAdminCommand(signer, dvmPubkey, "self_test", {}, RELAYS);
+    const timeoutMs = mode === "full" ? 300000 : 120000; // 5 min for full, 2 min for quick
 
-      // Set a timeout for self-test (it can take a while)
+    try {
+      await sendAdminCommand(signer, dvmPubkey, "self_test", { mode }, RELAYS);
+
       setTimeout(() => {
         if (isRunning && pendingCommandRef.current === "self_test") {
           setError("Timeout waiting for self-test response (test may still be running)");
           setIsRunning(false);
           pendingCommandRef.current = null;
         }
-      }, 120000); // 2 minute timeout
+      }, timeoutMs);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run self-test");
       setIsRunning(false);
       pendingCommandRef.current = null;
     }
-  }, [dvmPubkey, isRunning]);
+  }, [dvmPubkey, isRunning, mode]);
 
   const getDiskWarningClass = (freePercent: number) => {
     if (freePercent < 10) return "critical";
@@ -247,64 +266,114 @@ export function SelfTest({ dvmPubkey, userPubkey }: SelfTestProps) {
       <div className="selftest-section">
         <div className="selftest-header">
           <h3>Encoder Self-Test</h3>
-          <button
-            className="selftest-button"
-            onClick={runSelfTest}
-            disabled={isRunning}
-          >
-            {isRunning ? "Running..." : "Run Test"}
-          </button>
+          <div className="selftest-controls">
+            <div className="mode-toggle">
+              <button
+                className={`mode-button ${mode === "quick" ? "active" : ""}`}
+                onClick={() => setMode("quick")}
+                disabled={isRunning}
+              >
+                Quick
+              </button>
+              <button
+                className={`mode-button ${mode === "full" ? "active" : ""}`}
+                onClick={() => setMode("full")}
+                disabled={isRunning}
+              >
+                Full
+              </button>
+            </div>
+            <button
+              className="selftest-button"
+              onClick={runSelfTest}
+              disabled={isRunning}
+            >
+              {isRunning ? "Running..." : "Run Test"}
+            </button>
+          </div>
         </div>
 
         {isRunning && (
           <div className="selftest-running">
             <div className="spinner" />
-            <p>Encoding test video at 720p... This may take a minute.</p>
+            <p>Running {mode} self-test... This may take {mode === "full" ? "several minutes" : "a minute"}.</p>
           </div>
         )}
 
         {error && <p className="error-message">{error}</p>}
 
         {result && (
-          <div className={`selftest-result ${result.success ? "success" : "failure"}`}>
-            <div className="result-header">
-              <span className={`result-badge ${result.success ? "success" : "failure"}`}>
-                {result.success ? "✓ Passed" : "✗ Failed"}
+          <div className="selftest-results">
+            {/* Summary bar */}
+            <div className={`summary-bar ${result.summary.failed > 0 ? "has-failures" : ""}`}>
+              <span className="summary-counts">
+                <span className={`result-badge ${result.summary.passed === result.summary.total ? "success" : "failure"}`}>
+                  {result.summary.passed}/{result.summary.total} passed
+                </span>
+                {result.summary.skipped > 0 && (
+                  <span className="summary-skipped">{result.summary.skipped} skipped</span>
+                )}
+              </span>
+              <span className="summary-meta">
+                Total: {formatDuration(result.summary.duration_secs)} | HW: {result.hwaccel} | Mode: {result.mode}
               </span>
             </div>
 
-            {result.error && (
-              <p className="error-message">{result.error}</p>
-            )}
-
-            {result.success && (
-              <div className="result-grid">
-                <div className="result-item">
-                  <span className="result-label">Speed</span>
-                  <span className="result-value highlight">{result.speed_ratio?.toFixed(1) ?? "N/A"}x realtime</span>
-                </div>
-                <div className="result-item">
-                  <span className="result-label">Hardware Accel</span>
-                  <span className="result-value">{result.hwaccel ?? "N/A"}</span>
-                </div>
-                <div className="result-item">
-                  <span className="result-label">Video Duration</span>
-                  <span className="result-value">{result.video_duration_secs ? formatDuration(result.video_duration_secs) : "N/A"}</span>
-                </div>
-                <div className="result-item">
-                  <span className="result-label">Encode Time</span>
-                  <span className="result-value">{result.encode_time_secs ? formatDuration(result.encode_time_secs) : "N/A"}</span>
-                </div>
-                <div className="result-item">
-                  <span className="result-label">Resolution</span>
-                  <span className="result-value">{result.resolution ?? "N/A"}</span>
-                </div>
-                <div className="result-item">
-                  <span className="result-label">Output Size</span>
-                  <span className="result-value">{result.output_size_bytes ? formatBytes(result.output_size_bytes) : "N/A"}</span>
-                </div>
-              </div>
-            )}
+            {/* Results table */}
+            <table className="results-table">
+              <thead>
+                <tr>
+                  <th>Clip</th>
+                  <th>Output Codec</th>
+                  <th>Status</th>
+                  <th>Speed</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.results.map((entry: SelfTestResultEntry, i: number) => (
+                  <>
+                    <tr
+                      key={`row-${i}`}
+                      className={`result-row ${entry.passed ? "passed" : "failed"} ${expandedRows.has(i) ? "expanded" : ""}`}
+                      onClick={() => toggleRow(i)}
+                    >
+                      <td>{entry.clip_name}</td>
+                      <td><code>{entry.output_codec}</code></td>
+                      <td>
+                        <span className={`result-badge ${entry.passed ? "success" : "failure"}`}>
+                          {entry.passed ? "PASS" : "FAIL"}
+                        </span>
+                      </td>
+                      <td>{entry.speed_ratio.toFixed(1)}x</td>
+                      <td>{formatDuration(entry.encode_time_secs)}</td>
+                    </tr>
+                    {expandedRows.has(i) && (
+                      <tr key={`detail-${i}`} className="detail-row">
+                        <td colSpan={5}>
+                          {entry.error && (
+                            <p className="error-message">{entry.error}</p>
+                          )}
+                          {entry.checks.length > 0 && (
+                            <div className="checks-list">
+                              {entry.checks.map((check: SelfTestCheck, j: number) => (
+                                <div key={j} className={`check-row ${check.passed ? "passed" : "failed"}`}>
+                                  <span className={`check-icon ${check.passed ? "success" : "failure"}`}>
+                                    {check.passed ? "OK" : "FAIL"}
+                                  </span>
+                                  <span className="check-name">{check.name}</span>
+                                  <span className="check-detail">{check.detail}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

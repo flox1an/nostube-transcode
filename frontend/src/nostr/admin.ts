@@ -63,16 +63,36 @@ export interface DvmJob {
   duration_secs?: number;
 }
 
-export interface SelfTestResult {
-  success: boolean;
-  video_duration_secs?: number;
-  encode_time_secs?: number;
-  speed_ratio?: number;
-  speed_description?: string;
-  hwaccel?: string;
-  resolution?: string;
-  output_size_bytes?: number;
+export interface SelfTestCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface SelfTestResultEntry {
+  clip_name: string;
+  output_codec: string;
+  hwaccel: string;
+  passed: boolean;
+  checks: SelfTestCheck[];
+  encode_time_secs: number;
+  speed_ratio: number;
   error?: string;
+}
+
+export interface SelfTestSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  duration_secs: number;
+}
+
+export interface SelfTestSuiteResult {
+  hwaccel: string;
+  mode: string;
+  results: SelfTestResultEntry[];
+  summary: SelfTestSummary;
 }
 
 export interface HwEncoderInfo {
