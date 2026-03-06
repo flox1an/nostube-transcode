@@ -13,6 +13,7 @@ pub mod error;
 pub mod identity;
 pub mod nostr;
 pub mod remote_config;
+pub mod selftest;
 pub mod startup;
 pub mod util;
 pub mod video;
