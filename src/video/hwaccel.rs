@@ -935,14 +935,45 @@ impl HwAccel {
             }
             Self::VideoToolbox => {
                 // VideoToolbox uses q:v (0-100, higher = better quality).
-                // Map CRF scale to VT quality: CRF 18 → q:v 75, CRF 23 → q:v 65, CRF 28 → q:v 55.
-                // This produces ~3-5 Mbps at 720p for CRF 23 (reasonable for streaming).
+                // Map CRF scale to VT quality: CRF 21 → q:v 69, CRF 26 → q:v 64, CRF 33 → q:v 57.
                 // Note: Do NOT combine with -maxrate/-bufsize — rate limiting cripples
                 // VT hardware encoder performance (5x → <1x).
                 let q = (90u32.saturating_sub(crf)).clamp(40, 80);
                 ("-q:v", q.to_string())
             }
             Self::Software => ("-crf", crf.to_string()),
+        }
+    }
+
+    /// Get target video bitrate for VideoToolbox hardware encoder.
+    ///
+    /// VideoToolbox's quality-based VBR (`-q:v`) produces unpredictably high bitrates.
+    /// Using average bitrate (`-b:v`) reliably constrains output to the target.
+    /// Bitrate targets are codec-specific: H.264 needs ~1.5x higher bitrates than H.265
+    /// for equivalent visual quality.
+    ///
+    /// Returns `None` for non-VideoToolbox backends (they use quality-based encoding).
+    pub fn video_bitrate(&self, height: u32, codec: Codec) -> Option<&'static str> {
+        match self {
+            Self::VideoToolbox => match codec {
+                Codec::H264 => Some(match height {
+                    h if h <= 240 => "450k",
+                    h if h <= 360 => "900k",
+                    h if h <= 480 => "1350k",
+                    h if h <= 720 => "2800k",
+                    h if h <= 1080 => "5000k",
+                    _ => "10000k", // 4K
+                }),
+                Codec::H265 | Codec::AV1 => Some(match height {
+                    h if h <= 240 => "300k",
+                    h if h <= 360 => "600k",
+                    h if h <= 480 => "900k",
+                    h if h <= 720 => "1875k",
+                    h if h <= 1080 => "3375k",
+                    _ => "6750k", // 4K
+                }),
+            },
+            _ => None,
         }
     }
 

@@ -437,15 +437,6 @@ impl FfmpegCommand {
                     cmd.arg(format!("-tag:v:{}", idx)).arg("hvc1");
                 }
 
-                // Add quality parameter based on hardware acceleration type
-                if let Some(q) = res.quality {
-                    let (quality_param, quality_value) = self.hwaccel.quality_param(q);
-                    // For per-stream quality, append stream index
-                    let param_with_idx =
-                        format!("{}:{}", quality_param.trim_start_matches('-'), idx);
-                    cmd.arg(format!("-{}", param_with_idx)).arg(&quality_value);
-                }
-
                 // Add encoder-specific options (only for first encoded stream to avoid duplicates)
                 // Use actual codec (from encoder name) since VAAPI may fall back to a
                 // different codec than requested (e.g. h264_vaapi when HEVC isn't supported).
@@ -461,17 +452,36 @@ impl FfmpegCommand {
                     }
                 }
 
-                if let Some(br) = &res.video_bitrate {
-                    cmd.arg(format!("-b:v:{}", idx)).arg(br);
-                }
-
-                // Apply per-resolution bitrate cap for hardware encoders
-                // This prevents NVENC VBR from producing excessively high bitrates
+                // VideoToolbox: use target bitrate (-b:v) instead of quality-based VBR.
+                // Other backends: use quality param (CRF/CQ/QP) with optional bitrate cap.
                 if let Some(height) = res.height {
-                    if let Some((maxrate, bufsize)) = self.hwaccel.bitrate_cap(height) {
-                        cmd.arg(format!("-maxrate:v:{}", idx)).arg(maxrate);
-                        cmd.arg(format!("-bufsize:v:{}", idx)).arg(bufsize);
+                    if let Some(target_br) = self.hwaccel.video_bitrate(height, self.codec) {
+                        cmd.arg(format!("-b:v:{}", idx)).arg(target_br);
+                    } else {
+                        // Quality-based encoding for non-VideoToolbox backends
+                        if let Some(q) = res.quality {
+                            let (quality_param, quality_value) = self.hwaccel.quality_param(q);
+                            let param_with_idx =
+                                format!("{}:{}", quality_param.trim_start_matches('-'), idx);
+                            cmd.arg(format!("-{}", param_with_idx)).arg(&quality_value);
+                        }
+
+                        if let Some(br) = &res.video_bitrate {
+                            cmd.arg(format!("-b:v:{}", idx)).arg(br);
+                        }
+
+                        // Apply per-resolution bitrate cap for hardware encoders
+                        // This prevents NVENC VBR from producing excessively high bitrates
+                        if let Some((maxrate, bufsize)) = self.hwaccel.bitrate_cap(height) {
+                            cmd.arg(format!("-maxrate:v:{}", idx)).arg(maxrate);
+                            cmd.arg(format!("-bufsize:v:{}", idx)).arg(bufsize);
+                        }
                     }
+                } else if let Some(q) = res.quality {
+                    let (quality_param, quality_value) = self.hwaccel.quality_param(q);
+                    let param_with_idx =
+                        format!("{}:{}", quality_param.trim_start_matches('-'), idx);
+                    cmd.arg(format!("-{}", param_with_idx)).arg(&quality_value);
                 }
             }
 
@@ -569,7 +579,7 @@ impl FfmpegMp4Command {
             input: input.to_string(),
             output_path,
             resolution,
-            crf: 23,
+            crf: 26,
             audio_bitrate: "128k".to_string(),
             hwaccel,
             codec,
@@ -680,20 +690,25 @@ impl FfmpegMp4Command {
             cmd.arg("-tag:v").arg("hvc1");
         }
 
-        // Quality parameter
-        let (quality_param, quality_value) = self.hwaccel.quality_param(self.crf);
-        cmd.arg(quality_param).arg(&quality_value);
-
         // Encoder-specific options (use actual codec from encoder name for correct profile)
         let actual_codec = Codec::from_encoder(encoder);
         for (opt, val) in self.hwaccel.encoder_options(actual_codec) {
             cmd.arg(opt).arg(val);
         }
 
-        // Apply bitrate cap for hardware encoders
-        if let Some((maxrate, bufsize)) = self.hwaccel.bitrate_cap(height) {
-            cmd.arg("-maxrate").arg(maxrate);
-            cmd.arg("-bufsize").arg(bufsize);
+        // VideoToolbox: use target bitrate (-b:v) instead of quality-based VBR.
+        // Other backends: use quality param (CRF/CQ/QP) with optional bitrate cap.
+        if let Some(target_br) = self.hwaccel.video_bitrate(height, self.codec) {
+            cmd.arg("-b:v").arg(target_br);
+        } else {
+            let (quality_param, quality_value) = self.hwaccel.quality_param(self.crf);
+            cmd.arg(quality_param).arg(&quality_value);
+
+            // Apply bitrate cap for hardware encoders
+            if let Some((maxrate, bufsize)) = self.hwaccel.bitrate_cap(height) {
+                cmd.arg("-maxrate").arg(maxrate);
+                cmd.arg("-bufsize").arg(bufsize);
+            }
         }
 
         // Audio codec

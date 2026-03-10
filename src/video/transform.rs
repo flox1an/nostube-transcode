@@ -134,7 +134,7 @@ impl TransformConfig {
                         ResolutionConfig {
                             // Width is auto-calculated to preserve aspect ratio
                             height: Some(240),
-                            quality: Some(30),
+                            quality: Some(33),
                             audio_bitrate: Some("64k".to_string()),
                             ..Default::default()
                         },
@@ -146,7 +146,7 @@ impl TransformConfig {
                         ResolutionConfig {
                             // Width is auto-calculated to preserve aspect ratio
                             height: Some(360),
-                            quality: Some(28),
+                            quality: Some(31),
                             audio_bitrate: Some("96k".to_string()),
                             ..Default::default()
                         },
@@ -158,7 +158,7 @@ impl TransformConfig {
                         ResolutionConfig {
                             // Width is auto-calculated to preserve aspect ratio
                             height: Some(480),
-                            quality: Some(26),
+                            quality: Some(29),
                             audio_bitrate: Some("128k".to_string()),
                             ..Default::default()
                         },
@@ -170,7 +170,8 @@ impl TransformConfig {
                         ResolutionConfig {
                             // Width is auto-calculated to preserve aspect ratio
                             height: Some(720),
-                            quality: Some(23),
+                            quality: Some(26),
+                            audio_bitrate: Some("128k".to_string()),
                             ..Default::default()
                         },
                     );
@@ -184,7 +185,8 @@ impl TransformConfig {
                             ResolutionConfig {
                                 // Width is auto-calculated to preserve aspect ratio
                                 height: Some(1080),
-                                quality: Some(20),
+                                quality: Some(23),
+                                audio_bitrate: Some("128k".to_string()),
                                 ..Default::default()
                             },
                         );
@@ -199,7 +201,7 @@ impl TransformConfig {
                             is_original: can_passthrough,
                             // If can't passthrough, set height for re-encoding (width auto-calculated)
                             height: if can_passthrough { None } else { Some(input_h) },
-                            quality: if can_passthrough { None } else { Some(18) },
+                            quality: if can_passthrough { None } else { Some(21) },
                             ..Default::default()
                         },
                     );
