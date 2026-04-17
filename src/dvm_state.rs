@@ -49,6 +49,8 @@ pub struct DvmState {
     pub pending_bids: HashMap<EventId, PendingBid>,
     /// Hardware acceleration method if available
     pub hwaccel: Option<String>,
+    /// Average transcode speed per resolution (realtime multiplier, e.g. 3.5 = 3.5x faster than realtime)
+    pub avg_speeds: HashMap<String, f64>,
 }
 
 /// Record of a job execution
@@ -102,7 +104,16 @@ impl DvmState {
             job_history: VecDeque::new(),
             pending_bids: HashMap::new(),
             hwaccel: None,
+            avg_speeds: HashMap::new(),
         }
+    }
+
+    /// Record the transcode speed for a resolution after a job completes.
+    /// `speed_multiplier` is video_duration / wall_time (e.g. 3.5 = 3.5x realtime).
+    pub fn record_job_speed(&mut self, resolution: &str, speed_multiplier: f64) {
+        let entry = self.avg_speeds.entry(resolution.to_string()).or_insert(speed_multiplier);
+        // Exponential moving average with alpha=0.3 to smooth out outliers
+        *entry = *entry * 0.7 + speed_multiplier * 0.3;
     }
 
     /// Add a pending bid

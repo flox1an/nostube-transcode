@@ -29,8 +29,24 @@ const DEFAULT_DVM_NAME: &str = "Video Transform DVM";
 /// Profile picture URL (hosted on the frontend deployment)
 const PROFILE_PICTURE_URL: &str = "https://nostube-transform.vercel.app/logo.png";
 
+/// Runtime capability data for enriching DVM announcements
+#[derive(Debug, Clone, Default)]
+pub struct DvmCapabilities {
+    /// Average transcode speed per resolution (realtime multiplier, e.g. 3.5x)
+    pub avg_speeds: std::collections::HashMap<String, f64>,
+    /// Current number of active jobs (queue depth)
+    pub jobs_active: u32,
+    /// Maximum concurrent jobs configured
+    pub max_concurrent: u32,
+}
+
 /// Builds a NIP-89 DVM announcement event
 pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuilder {
+    build_announcement_event_with_caps(config, hwaccel, &DvmCapabilities::default())
+}
+
+/// Builds a NIP-89 DVM announcement event with runtime capability data
+pub fn build_announcement_event_with_caps(config: &Config, hwaccel: HwAccel, caps: &DvmCapabilities) -> EventBuilder {
     let relays: Vec<String> = config.nostr_relays.iter().map(|u| u.to_string()).collect();
 
     // Use configured name or default
@@ -100,6 +116,60 @@ pub fn build_announcement_event(config: &Config, hwaccel: HwAccel) -> EventBuild
             "av1_hw_decode".to_string(),
             if hwaccel.has_av1_hw_decode() { "true" } else { "false" }.to_string(),
         ],
+    ));
+
+    // Hardware acceleration type (human-readable identifier for DVM selection UI)
+    let hwaccel_id = match hwaccel {
+        HwAccel::Nvenc => "nvidia_nvenc",
+        HwAccel::Vaapi => "vaapi",
+        HwAccel::Qsv => "intel_qsv",
+        HwAccel::VideoToolbox => "apple_videotoolbox",
+        HwAccel::Software => "software",
+    };
+    tags.push(Tag::custom(
+        TagKind::Custom("capability".into()),
+        vec!["hardware".to_string(), hwaccel_id.to_string()],
+    ));
+
+    // Supported codecs
+    let codecs = match hwaccel {
+        HwAccel::Nvenc => "h264,h265,av1",
+        HwAccel::Vaapi => "h264,h265,av1",
+        HwAccel::Qsv => "h264,h265,av1",
+        HwAccel::VideoToolbox => "h264,h265",
+        HwAccel::Software => "h264,h265",
+    };
+    tags.push(Tag::custom(
+        TagKind::Custom("capability".into()),
+        vec!["codecs".to_string(), codecs.to_string()],
+    ));
+
+    // Queue depth and concurrency
+    let max_concurrent = if caps.max_concurrent > 0 { caps.max_concurrent } else { 1 };
+    tags.push(Tag::custom(
+        TagKind::Custom("capability".into()),
+        vec!["max_concurrent".to_string(), max_concurrent.to_string()],
+    ));
+    tags.push(Tag::custom(
+        TagKind::Custom("capability".into()),
+        vec!["queue_length".to_string(), caps.jobs_active.to_string()],
+    ));
+
+    // Per-resolution average transcode speed (realtime multiplier)
+    for (resolution, speed) in &caps.avg_speeds {
+        tags.push(Tag::custom(
+            TagKind::Custom("capability".into()),
+            vec![
+                format!("speed_{}", resolution),
+                format!("{:.1}", speed),
+            ],
+        ));
+    }
+
+    // Pricing rate (0 = free)
+    tags.push(Tag::custom(
+        TagKind::Custom("rate".into()),
+        vec![config.base_rate_sats_per_min.to_string()],
     ));
 
     // Add admin/operator tag if configured (NIP-89)
@@ -284,6 +354,7 @@ impl AnnouncementPublisher {
             dvm_name: state.config.name.clone(),
             dvm_about: state.config.about.clone(),
             admin_pubkey: state.config.admin.clone(),
+            base_rate_sats_per_min: state.config.base_rate_sats_per_min,
         }
     }
 
@@ -304,7 +375,16 @@ impl AnnouncementPublisher {
             "Publishing DVM announcement"
         );
 
-        let event = build_announcement_event(config, self.hwaccel);
+        let caps = {
+            let state = self.state.read().await;
+            DvmCapabilities {
+                avg_speeds: state.avg_speeds.clone(),
+                jobs_active: state.jobs_active,
+                max_concurrent: state.config.max_concurrent_jobs,
+            }
+        };
+
+        let event = build_announcement_event_with_caps(config, self.hwaccel, &caps);
 
         match self.publisher.publish(event).await {
             Ok(_) => {
@@ -433,6 +513,7 @@ mod tests {
             dvm_name: Some("Test DVM".to_string()),
             dvm_about: Some("Test DVM about".to_string()),
             admin_pubkey: Some(admin_pubkey.to_string()),
+            base_rate_sats_per_min: 0,
         };
 
         let event_builder = build_announcement_event(&config, HwAccel::Software);
@@ -479,6 +560,7 @@ mod tests {
             dvm_name: Some("Test DVM".to_string()),
             dvm_about: Some("Test DVM about".to_string()),
             admin_pubkey: None,
+            base_rate_sats_per_min: 0,
         };
 
         let event_builder = build_announcement_event(&config, HwAccel::Software);
@@ -509,6 +591,7 @@ mod tests {
             dvm_name: Some("My DVM".to_string()),
             dvm_about: Some("Transcodes videos".to_string()),
             admin_pubkey: None,
+            base_rate_sats_per_min: 0,
         };
 
         let event_builder = build_metadata_event(&config, HwAccel::Software);
@@ -539,6 +622,7 @@ mod tests {
             dvm_name: None,
             dvm_about: None,
             admin_pubkey: Some(admin_pubkey.to_string()),
+            base_rate_sats_per_min: 0,
         };
 
         let builder = build_contact_list_event(&config).expect("Should build contact list");
@@ -567,6 +651,7 @@ mod tests {
             dvm_name: None,
             dvm_about: None,
             admin_pubkey: None,
+            base_rate_sats_per_min: 0,
         };
 
         assert!(build_contact_list_event(&config).is_none());

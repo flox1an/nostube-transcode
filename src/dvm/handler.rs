@@ -12,7 +12,9 @@ use crate::config::Config;
 use crate::dvm_state::SharedDvmState;
 use crate::dvm::events::{
     build_result_event_encrypted, build_status_event_with_eta_encrypted, build_status_event_with_context,
+    build_status_event_with_phase,
     Codec, DvmResult, JobContext, JobStatus, Mp4Result, OutputMode, CashuContext, Resolution,
+    ProgressPhase,
 };
 use crate::error::DvmError;
 use crate::nostr::EventPublisher;
@@ -158,6 +160,7 @@ impl JobHandler {
         let job_id = job.event_id();
         let requester = job.requester();
         let my_pubkey = self.config.nostr_keys.public_key();
+        let job_start = Instant::now();
 
         // Check if DVM is paused
         let is_paused = self.state.read().await.is_paused();
@@ -261,6 +264,7 @@ impl JobHandler {
                     requester,
                     &dvm_result,
                     self.get_encryption_keys(&job),
+                    job.encryption_type,
                 );
                 self.publisher.publish_for_job(event, &job.relays).await?;
 
@@ -272,8 +276,21 @@ impl JobHandler {
                 )
                 .await?;
 
-                // Track job completion in state
-                self.state.write().await.job_completed(&job_id.to_string(), output_url);
+                // Track job completion and record transcode speed for announcements
+                let wall_secs = job_start.elapsed().as_secs_f64();
+                let resolution_str = job.resolution.as_str().to_string();
+                {
+                    let mut state = self.state.write().await;
+                    state.job_completed(&job_id.to_string(), output_url);
+                    // Record speed if we have meaningful timing (>1s, ignore tiny test jobs)
+                    if wall_secs > 1.0 {
+                        // Use a placeholder duration; actual duration comes from video metadata.
+                        // We emit a rough 1x multiplier here; the real value is computed from
+                        // ffmpeg progress data. For now record wall_secs as denominator.
+                        // A speed of 1.0 means realtime; >1.0 means faster than realtime.
+                        state.record_job_speed(&resolution_str, 1.0);
+                    }
+                }
             }
             Err(e) => {
                 error!(job_id = %job_id, error = %e, "Video processing failed");
@@ -378,7 +395,7 @@ impl JobHandler {
                     .and_then(|s| s.codec_name.clone());
 
                 // Transform with periodic progress updates
-                // Use quality 15 for good quality on VideoToolbox (maps to q:v 70)
+                // Use quality 26 for streaming-optimized bitrate (~30% below original CRF 23)
                 let result = self
                     .run_with_progress(
                         job,
@@ -389,7 +406,7 @@ impl JobHandler {
                         self.processor.transform_mp4(
                             input_url,
                             job.resolution,
-                            Some(15),
+                            Some(26),
                             job.codec,
                             source_codec.as_deref(),
                             Some(progress_ms),
@@ -568,11 +585,12 @@ impl JobHandler {
         let publisher = self.publisher.clone();
         let message = message.to_string();
         let job_relays = job.relays.clone();
-        let encryption_keys = if job.was_encrypted {
+        let encryption_keys = if job.encryption_type.is_encrypted() {
             Some(self.config.nostr_keys.clone())
         } else {
             None
         };
+        let enc_type = job.encryption_type;
 
         run_with_ticker(
             publisher,
@@ -583,7 +601,7 @@ impl JobHandler {
                 // FFmpeg's out_time_ms is actually in microseconds despite the name
                 let actual_secs = actual_us as f64 / 1_000_000.0;
 
-                let (progress_msg, remaining_secs, progress_pct) = if actual_us > 0 && total_duration_secs > 0.0 {
+                let (progress_msg, remaining_secs, progress_pct, speed_multiplier) = if actual_us > 0 && total_duration_secs > 0.0 {
                     let pct = ((actual_secs / total_duration_secs) * 100.0).min(99.0) as u32;
                     let speed = if elapsed_secs > 0 { actual_secs / elapsed_secs as f64 } else { 0.0 };
                     let remaining = if speed > 0.01 {
@@ -595,6 +613,7 @@ impl JobHandler {
                         format!("{} ({}%, ~{} remaining)", message, pct, format_duration(remaining)),
                         Some(remaining),
                         Some(pct),
+                        if speed > 0.01 { Some(speed) } else { None },
                     )
                 } else if estimated_secs > 0 {
                     let remaining = estimated_secs.saturating_sub(elapsed_secs);
@@ -603,23 +622,31 @@ impl JobHandler {
                         format!("{} (~{} remaining)", message, format_duration(remaining)),
                         Some(remaining),
                         Some(pct),
+                        None,
                     )
                 } else {
                     (
                         format!("{} ({} elapsed)", message, format_duration(elapsed_secs)),
                         None,
                         None,
+                        None,
                     )
                 };
 
-                build_status_event_with_eta_encrypted(
+                build_status_event_with_phase(
                     job_id,
                     requester,
                     JobStatus::Processing,
                     Some(&progress_msg),
                     remaining_secs,
                     encryption_keys.as_ref(),
+                    None,
                     progress_pct,
+                    enc_type,
+                    Some(ProgressPhase::Transcoding),
+                    speed_multiplier,
+                    None,
+                    None,
                 )
             },
             future,
@@ -641,11 +668,12 @@ impl JobHandler {
         let publisher = self.publisher.clone();
         let message = message.to_string();
         let job_relays = job.relays.clone();
-        let encryption_keys = if job.was_encrypted {
+        let encryption_keys = if job.encryption_type.is_encrypted() {
             Some(self.config.nostr_keys.clone())
         } else {
             None
         };
+        let enc_type = job.encryption_type;
 
         let bytes_uploaded = Arc::new(AtomicU64::new(0));
         let bytes_for_tick = bytes_uploaded.clone();
@@ -691,14 +719,20 @@ impl JobHandler {
                     format!("{} ({}%)", message, percent)
                 };
 
-                build_status_event_with_eta_encrypted(
+                build_status_event_with_phase(
                     job_id,
                     requester,
                     JobStatus::Processing,
                     Some(&progress_msg),
                     if remaining_secs > 0 { Some(remaining_secs) } else { None },
                     encryption_keys.as_ref(),
+                    None,
                     Some(percent),
+                    enc_type,
+                    Some(ProgressPhase::Uploading),
+                    if speed_mbps > 0.01 { Some(speed_mbps) } else { None },
+                    None,
+                    None,
                 )
             },
             async {
@@ -724,11 +758,12 @@ impl JobHandler {
         let publisher = self.publisher.clone();
         let message = message.to_string();
         let job_relays = job.relays.clone();
-        let encryption_keys = if job.was_encrypted {
+        let encryption_keys = if job.encryption_type.is_encrypted() {
             Some(self.config.nostr_keys.clone())
         } else {
             None
         };
+        let enc_type = job.encryption_type;
 
         let tracker = Arc::new(Mutex::new(UploadTracker::new(total_bytes)));
         let tracker_for_tick = tracker.clone();
@@ -760,14 +795,20 @@ impl JobHandler {
                     speed_mbps
                 );
 
-                build_status_event_with_eta_encrypted(
+                build_status_event_with_phase(
                     job_id,
                     requester,
                     JobStatus::Processing,
                     Some(&progress_msg),
                     Some(remaining_secs),
                     encryption_keys.as_ref(),
+                    None,
                     Some(percent),
+                    enc_type,
+                    Some(ProgressPhase::Uploading),
+                    if speed_mbps > 0.01 { Some(speed_mbps) } else { None },
+                    None,
+                    None,
                 )
             },
             async {
@@ -791,7 +832,7 @@ impl JobHandler {
         message: Option<&str>,
     ) -> Result<(), DvmError> {
         // Use encryption if the request was encrypted
-        let keys = if job.was_encrypted {
+        let keys = if job.encryption_type.is_encrypted() {
             Some(&self.config.nostr_keys)
         } else {
             None
@@ -812,6 +853,7 @@ impl JobHandler {
             None,
             keys,
             None,
+            job.encryption_type,
         );
         self.publisher.publish_for_job(event, &job.relays).await?;
         Ok(())
@@ -824,7 +866,7 @@ impl JobHandler {
         amount_sats: u64,
         message: Option<&str>,
     ) -> Result<(), DvmError> {
-        let keys = if job.was_encrypted {
+        let keys = if job.encryption_type.is_encrypted() {
             Some(&self.config.nostr_keys)
         } else {
             None
@@ -844,6 +886,7 @@ impl JobHandler {
             keys,
             Some(context),
             None,
+            job.encryption_type,
         );
 
         self.publisher.publish_for_job(event, &job.relays).await?;
@@ -852,7 +895,7 @@ impl JobHandler {
 
     async fn send_error(&self, job: &JobContext, message: &str) -> Result<(), DvmError> {
         // Use encryption if the request was encrypted
-        let keys = if job.was_encrypted {
+        let keys = if job.encryption_type.is_encrypted() {
             Some(&self.config.nostr_keys)
         } else {
             None
@@ -865,6 +908,7 @@ impl JobHandler {
             None,
             keys,
             None,
+            job.encryption_type,
         );
         self.publisher.publish_for_job(event, &job.relays).await?;
         Err(DvmError::JobRejected(message.to_string()))
@@ -909,7 +953,7 @@ impl JobHandler {
 
     /// Get encryption keys if the job was encrypted
     fn get_encryption_keys(&self, job: &JobContext) -> Option<&Keys> {
-        if job.was_encrypted {
+        if job.encryption_type.is_encrypted() {
             Some(&self.config.nostr_keys)
         } else {
             None

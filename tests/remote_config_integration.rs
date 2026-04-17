@@ -25,6 +25,7 @@ fn test_config_roundtrip() {
         about: Some("Integration test DVM".to_string()),
         paused: false,
         max_concurrent_jobs: 1,
+        base_rate_sats_per_min: 0,
     };
 
     // Serialize to JSON

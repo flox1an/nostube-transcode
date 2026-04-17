@@ -60,6 +60,9 @@ pub struct RemoteConfig {
     /// Maximum number of concurrent video transformations (default: 1)
     #[serde(default = "default_max_concurrent_jobs")]
     pub max_concurrent_jobs: u32,
+    /// Base rate in satoshis per minute of video (0 = free)
+    #[serde(default)]
+    pub base_rate_sats_per_min: u64,
 }
 
 fn default_max_concurrent_jobs() -> u32 {
@@ -103,6 +106,7 @@ impl Default for RemoteConfig {
             about: default_about(),
             paused: false,
             max_concurrent_jobs: default_max_concurrent_jobs(),
+            base_rate_sats_per_min: 0,
         }
     }
 }
@@ -224,6 +228,7 @@ mod tests {
             about: Some("A test DVM".to_string()),
             paused: false,
             max_concurrent_jobs: 1,
+            base_rate_sats_per_min: 0,
         };
 
         let json = serde_json::to_string(&config).unwrap();

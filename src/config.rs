@@ -19,6 +19,7 @@ pub struct Config {
     pub dvm_name: Option<String>,
     pub dvm_about: Option<String>,
     pub admin_pubkey: Option<String>,
+    pub base_rate_sats_per_min: u64,
 }
 
 impl Config {
@@ -76,6 +77,7 @@ impl Config {
             dvm_name: remote.name.clone(),
             dvm_about: remote.about.clone(),
             admin_pubkey: remote.admin.clone(),
+            base_rate_sats_per_min: remote.base_rate_sats_per_min,
         })
     }
 }

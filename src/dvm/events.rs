@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::debug;
 
-use crate::dvm::encryption::is_encrypted;
+use crate::dvm::encryption::{encrypt_for_dvm, is_encrypted, EncryptionType};
 use crate::error::DvmError;
 
 /// Expiration time for status events (1 hour)
@@ -169,7 +169,7 @@ pub struct DvmInput {
 #[derive(Debug, Clone)]
 pub struct JobContext {
     pub request: Event,
-    pub was_encrypted: bool,
+    pub encryption_type: EncryptionType,
     pub input: DvmInput,
     pub relays: Vec<::url::Url>,
     pub mode: OutputMode,
@@ -303,7 +303,7 @@ impl JobContext {
 
         Ok(Self {
             request: event,
-            was_encrypted: true,
+            encryption_type: EncryptionType::Nip44,
             input,
             relays,
             mode,
@@ -329,7 +329,7 @@ impl JobContext {
 
         Ok(Self {
             request: event,
-            was_encrypted: false,
+            encryption_type: EncryptionType::None,
             input,
             relays,
             mode,
@@ -344,11 +344,19 @@ impl JobContext {
         })
     }
 
-    /// Create JobContext from an encrypted event (NIP-04)
+    /// Create JobContext from an encrypted event (NIP-04 or NIP-44)
     fn from_encrypted_event(event: Event, keys: &Keys) -> Result<Self, DvmError> {
-        // Decrypt content using NIP-04
-        let decrypted = nip04::decrypt(keys.secret_key(), &event.pubkey, &event.content)
-            .map_err(|e| DvmError::JobRejected(format!("Failed to decrypt request: {}", e)))?;
+        // Try NIP-04 first, fall back to NIP-44, tracking which succeeded
+        let (decrypted, enc_type) =
+            if let Ok(d) = nip04::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
+                (d, EncryptionType::Nip04)
+            } else {
+                let d = nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content)
+                    .map_err(|e| {
+                        DvmError::JobRejected(format!("Failed to decrypt request: {}", e))
+                    })?;
+                (d, EncryptionType::Nip44)
+            };
 
         // Parse decrypted content as JSON containing i and params
         let encrypted_content: EncryptedContent =
@@ -382,7 +390,7 @@ impl JobContext {
 
         Ok(Self {
             request: event,
-            was_encrypted: true,
+            encryption_type: enc_type,
             input,
             relays,
             mode,
@@ -500,7 +508,7 @@ pub fn build_status_event(
     status: JobStatus,
     message: Option<&str>,
 ) -> EventBuilder {
-    build_status_event_with_eta_encrypted(job_id, requester, status, message, None, None, None)
+    build_status_event_with_eta_encrypted(job_id, requester, status, message, None, None, None, EncryptionType::None)
 }
 
 /// Build a status event with optional estimated time remaining
@@ -511,7 +519,7 @@ pub fn build_status_event_with_eta(
     message: Option<&str>,
     remaining_secs: Option<u64>,
 ) -> EventBuilder {
-    build_status_event_with_eta_encrypted(job_id, requester, status, message, remaining_secs, None, None)
+    build_status_event_with_eta_encrypted(job_id, requester, status, message, remaining_secs, None, None, EncryptionType::None)
 }
 
 /// Context for Cashu payment request
@@ -521,7 +529,7 @@ pub struct CashuContext {
     pub amount_sats: u64,
 }
 
-/// Build a status event with optional encryption (NIP-04)
+/// Build a status event with optional encryption
 pub fn build_status_event_with_eta_encrypted(
     job_id: EventId,
     requester: PublicKey,
@@ -530,6 +538,7 @@ pub fn build_status_event_with_eta_encrypted(
     remaining_secs: Option<u64>,
     keys: Option<&Keys>,
     progress: Option<u32>,
+    enc_type: EncryptionType,
 ) -> EventBuilder {
     build_status_event_with_context(
         job_id,
@@ -540,7 +549,26 @@ pub fn build_status_event_with_eta_encrypted(
         keys,
         None,
         progress,
+        enc_type,
     )
+}
+
+/// Structured phase for progress events
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressPhase {
+    Queued,
+    Transcoding,
+    Uploading,
+}
+
+impl ProgressPhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Transcoding => "transcoding",
+            Self::Uploading => "uploading",
+        }
+    }
 }
 
 /// Build a status event with optional context (e.g. Cashu)
@@ -553,6 +581,44 @@ pub fn build_status_event_with_context(
     keys: Option<&Keys>,
     cashu: Option<CashuContext>,
     progress: Option<u32>,
+    enc_type: EncryptionType,
+) -> EventBuilder {
+    build_status_event_with_phase(
+        job_id,
+        requester,
+        status,
+        message,
+        remaining_secs,
+        keys,
+        cashu,
+        progress,
+        enc_type,
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+/// Build a status event with full structured progress metadata
+#[allow(clippy::too_many_arguments)]
+pub fn build_status_event_with_phase(
+    job_id: EventId,
+    requester: PublicKey,
+    status: JobStatus,
+    message: Option<&str>,
+    remaining_secs: Option<u64>,
+    keys: Option<&Keys>,
+    cashu: Option<CashuContext>,
+    progress: Option<u32>,
+    enc_type: EncryptionType,
+    phase: Option<ProgressPhase>,
+    // Realtime speed multiplier (transcoding) or MB/s (uploading)
+    speed: Option<f64>,
+    // Output file size in bytes
+    file_size: Option<u64>,
+    // Position in job queue (1-based, only when queued)
+    queue_position: Option<u32>,
 ) -> EventBuilder {
     // NIP-40 expiration: 24 hours
     let expiration = Timestamp::now() + Duration::from_secs(STATUS_EXPIRATION_SECS);
@@ -594,10 +660,16 @@ pub fn build_status_event_with_context(
                 obj.insert("amount".to_string(), serde_json::json!(ctx.amount_sats));
             }
         }
+        if let (Some(obj), Some(p)) = (status_content.as_object_mut(), phase) {
+            obj.insert("phase".to_string(), serde_json::json!(p.as_str()));
+        }
+        if let (Some(obj), Some(s)) = (status_content.as_object_mut(), speed) {
+            obj.insert("speed".to_string(), serde_json::json!(s));
+        }
 
-        // Encrypt the content
+        // Encrypt the content using the same encryption type as the request
         if let Ok(encrypted) =
-            nip04::encrypt(keys.secret_key(), &requester, status_content.to_string())
+            encrypt_for_dvm(keys, &requester, &status_content.to_string(), enc_type)
         {
             tags.push(Tag::custom(
                 TagKind::Custom("encrypted".into()),
@@ -607,7 +679,7 @@ pub fn build_status_event_with_context(
         }
     }
 
-    // Unencrypted: put message in content field and eta in tags
+    // Unencrypted: put message in content field and structured data in tags
     let content = if let Some(msg) = message {
         // Also keep the content tag for backward compatibility with our own docs
         tags.push(Tag::custom(
@@ -633,6 +705,35 @@ pub fn build_status_event_with_context(
         ));
     }
 
+    // Structured progress tags (Phase 3)
+    if let Some(p) = phase {
+        tags.push(Tag::custom(
+            TagKind::Custom("phase".into()),
+            vec![p.as_str().to_string()],
+        ));
+    }
+
+    if let Some(s) = speed {
+        tags.push(Tag::custom(
+            TagKind::Custom("speed".into()),
+            vec![format!("{:.2}", s)],
+        ));
+    }
+
+    if let Some(size) = file_size {
+        tags.push(Tag::custom(
+            TagKind::Custom("file_size".into()),
+            vec![size.to_string()],
+        ));
+    }
+
+    if let Some(pos) = queue_position {
+        tags.push(Tag::custom(
+            TagKind::Custom("queue_position".into()),
+            vec![pos.to_string()],
+        ));
+    }
+
     EventBuilder::new(DVM_STATUS_KIND, content, tags)
 }
 
@@ -642,15 +743,16 @@ pub fn build_result_event(
     requester: PublicKey,
     result: &DvmResult,
 ) -> EventBuilder {
-    build_result_event_encrypted(job_id, requester, result, None)
+    build_result_event_encrypted(job_id, requester, result, None, EncryptionType::None)
 }
 
-/// Build a result event with optional encryption (NIP-04)
+/// Build a result event with optional encryption, matching the client's encryption type
 pub fn build_result_event_encrypted(
     job_id: EventId,
     requester: PublicKey,
     result: &DvmResult,
     keys: Option<&Keys>,
+    enc_type: EncryptionType,
 ) -> EventBuilder {
     // NIP-40 expiration: 7 days
     let expiration = Timestamp::now() + Duration::from_secs(RESULT_EXPIRATION_SECS);
@@ -664,14 +766,16 @@ pub fn build_result_event_encrypted(
     // NIP-90: output goes in content field as JSON
     let content = serde_json::to_string(result).unwrap_or_default();
 
-    // Encrypt if keys provided
+    // Encrypt if keys provided and encryption type is not None
     if let Some(keys) = keys {
-        if let Ok(encrypted) = nip04::encrypt(keys.secret_key(), &requester, &content) {
-            tags.push(Tag::custom(
-                TagKind::Custom("encrypted".into()),
-                Vec::<String>::new(),
-            ));
-            return EventBuilder::new(DVM_VIDEO_TRANSFORM_RESULT_KIND, encrypted, tags);
+        if enc_type.is_encrypted() {
+            if let Ok(encrypted) = encrypt_for_dvm(keys, &requester, &content, enc_type) {
+                tags.push(Tag::custom(
+                    TagKind::Custom("encrypted".into()),
+                    Vec::<String>::new(),
+                ));
+                return EventBuilder::new(DVM_VIDEO_TRANSFORM_RESULT_KIND, encrypted, tags);
+            }
         }
     }
 
