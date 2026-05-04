@@ -158,69 +158,41 @@ By default the DVM processes one video at a time. With a powerful GPU you can in
 
 Note: NVIDIA GeForce cards have an NVENC session limit (max 5 on newer, 3 on older cards). Keep `max_concurrent_jobs` within this limit.
 
-## Running as a Daemon (Standalone)
+## Running as a Background Service
 
-The installer generates a daemon config for your platform. By default these are **user-level services** that run while you are logged in. See the sections below to promote them to system services that survive logout.
-
-### Linux (systemd)
+After installing the binary, the easiest way to set up and start the service is:
 
 ```bash
-# Start as a user service (runs while logged in)
-systemctl --user enable --now nostube-transcode
-
-# Check status / logs
-systemctl --user status nostube-transcode
-journalctl --user -u nostube-transcode -f
-
-# Stop and disable
-systemctl --user disable --now nostube-transcode
+nostube-transcode install
 ```
 
-To keep the service running after logout (system service):
+This installs the service definition for your platform and starts it immediately.
+
+### Service management commands
+
+```bash
+nostube-transcode install       # Install service definition and start immediately
+nostube-transcode start         # Start the service
+nostube-transcode stop          # Stop the service
+nostube-transcode restart       # Restart (refreshes stale service definition)
+nostube-transcode status        # Brief status summary
+nostube-transcode status --deep # Full systemctl/launchctl output + recent logs
+nostube-transcode logs -f       # Follow logs
+nostube-transcode uninstall     # Stop, disable and remove service definition
+```
+
+**Platform details:**
+
+| Platform | Service manager | Service file |
+|---|---|---|
+| Linux (systemd) | systemd user service | `~/.config/systemd/user/nostube-transcode.service` |
+| Linux (SysV) | SysV init script | `~/.local/share/nostube-transcode/nostube-transcode.initd` |
+| macOS | launchd user agent | `~/Library/LaunchAgents/com.nostube.transcode.plist` |
+
+For log persistence across reboots on headless Linux servers:
 
 ```bash
 loginctl enable-linger $USER
-```
-
-This tells systemd to start your user services at boot and keep them running regardless of login sessions.
-
-### Linux (SysV init)
-
-For distributions without systemd (e.g., MX Linux, Devuan), the installer generates a SysV init script at `~/.local/share/nostube-transcode/nostube-transcode.initd`. Install it as a system service when ready:
-
-```bash
-sudo cp ~/.local/share/nostube-transcode/nostube-transcode.initd /etc/init.d/nostube-transcode
-sudo update-rc.d nostube-transcode defaults
-sudo service nostube-transcode start
-```
-
-```bash
-# Check status / stop
-sudo service nostube-transcode status
-sudo service nostube-transcode stop
-
-# Remove from boot
-sudo update-rc.d nostube-transcode remove
-```
-
-### macOS (launchd)
-
-```bash
-# Start as a user agent (runs while logged in)
-launchctl load ~/Library/LaunchAgents/com.nostube.transcode.plist
-
-# Check logs
-tail -f ~/.local/share/nostube-transcode/stderr.log
-
-# Stop
-launchctl unload ~/Library/LaunchAgents/com.nostube.transcode.plist
-```
-
-To run as a system daemon that survives logout, copy the plist to LaunchDaemons:
-
-```bash
-sudo cp ~/Library/LaunchAgents/com.nostube.transcode.plist /Library/LaunchDaemons/
-sudo launchctl load /Library/LaunchDaemons/com.nostube.transcode.plist
 ```
 
 ## Features
