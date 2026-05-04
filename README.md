@@ -81,6 +81,32 @@ OPERATOR_NPUB=npub1... cargo run --release
 - Verify encoder availability: `ffmpeg -encoders 2>/dev/null | grep -E "nvenc|vaapi|qsv"`
 - For NVIDIA: CUDA toolkit and `libnvidia-encode` must be installed on the host
 
+## CLI Reference
+
+`nostube-transcode` has a full subcommand interface for managing the DVM:
+
+```text
+nostube-transcode <command> [options]
+
+Commands:
+  run                 Run the DVM in the foreground
+  setup               Interactive configuration wizard
+  install             Install and start the background service
+  uninstall           Stop and remove the background service
+  start               Start the service
+  stop                Stop the service
+  restart             Restart the service
+  status              Show service and runtime status
+  logs                Follow or print recent service logs
+  doctor              Check prerequisites and configuration
+  update              Update the installed binary from GitHub releases
+  config              Get or set remote DVM configuration
+  docker              Manage Docker deployment
+  version             Print version information
+```
+
+If invoked with no subcommand, the DVM runs in the foreground (backward-compatible, deprecated — use `run` explicitly).
+
 ## Configuration
 
 The DVM requires one environment variable:

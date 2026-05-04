@@ -2140,6 +2140,7 @@ dependencies = [
  "base64 0.22.1",
  "cdk",
  "chrono",
+ "clap",
  "dirs",
  "dotenvy",
  "futures",

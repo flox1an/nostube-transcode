@@ -1,176 +1,129 @@
-use tokio::signal;
-use tracing::info;
-
-use nostube_transcode::admin::run_admin_listener;
-use nostube_transcode::blossom::BlossomClient;
-use nostube_transcode::dvm::{AnnouncementPublisher, JobHandler};
-use nostube_transcode::nostr::{EventPublisher, SubscriptionManager};
-use nostube_transcode::startup::initialize;
-use nostube_transcode::video::{HwAccel, VideoProcessor};
-use nostube_transcode::web::run_server;
-use std::sync::Arc;
-use tokio::sync::Notify;
+use clap::Parser;
+use nostube_transcode::cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load environment variables from .env or data/env before doing anything else
-    // Try .env in current directory first
-    if let Err(e) = dotenvy::dotenv() {
-        if !e.not_found() {
-            eprintln!("Warning: Error loading .env file: {}", e);
+    let cli = Cli::parse();
+
+    match cli.command {
+        None => {
+            eprintln!(
+                "Note: no subcommand given — defaulting to 'run'. \
+                 In future use: nostube-transcode run"
+            );
+            init_tracing();
+            nostube_transcode::runtime::run_daemon(false).await
+        }
+        Some(Commands::Run { replace }) => {
+            init_tracing();
+            nostube_transcode::runtime::run_daemon(replace).await
+        }
+        Some(Commands::Version) => {
+            println!("nostube-transcode {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Some(Commands::Install { force, system, user }) => {
+            let paths = nostube_transcode::paths::Paths::resolve();
+            nostube_transcode::service::install_and_start(
+                &paths,
+                system,
+                force,
+                user.as_deref(),
+            )
+            .map_err(|e| {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            })
+            .ok();
+            Ok(())
+        }
+        Some(Commands::Uninstall { system, .. }) => {
+            let paths = nostube_transcode::paths::Paths::resolve();
+            nostube_transcode::service::uninstall(&paths, system)
+                .map_err(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                })
+                .ok();
+            Ok(())
+        }
+        Some(Commands::Start { system }) => {
+            let paths = nostube_transcode::paths::Paths::resolve();
+            nostube_transcode::service::start(&paths, system)
+                .map_err(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                })
+                .ok();
+            Ok(())
+        }
+        Some(Commands::Stop { system, force }) => {
+            nostube_transcode::service::stop(system, force)
+                .map_err(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                })
+                .ok();
+            Ok(())
+        }
+        Some(Commands::Restart { system }) => {
+            let paths = nostube_transcode::paths::Paths::resolve();
+            nostube_transcode::service::restart(&paths, system)
+                .map_err(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                })
+                .ok();
+            Ok(())
+        }
+        Some(Commands::Status { deep, system }) => {
+            let paths = nostube_transcode::paths::Paths::resolve();
+            println!("Binary:   {}", paths.binary_path.display());
+            println!("Data dir: {}", paths.data_dir.display());
+            println!(
+                "Service:  {}",
+                nostube_transcode::service::ServiceManager::detect().name()
+            );
+            if nostube_transcode::service::process::is_process_running(&paths.pid_file) {
+                let pid = nostube_transcode::service::process::read_pid_file(&paths.pid_file)
+                    .unwrap_or(0);
+                println!("Process:  running (pid {})", pid);
+            } else {
+                println!("Process:  not running");
+            }
+            println!();
+            nostube_transcode::service::status(system, deep)
+                .unwrap_or_else(|e| eprintln!("{}", e));
+            Ok(())
+        }
+        Some(Commands::Logs { follow, lines, system }) => {
+            let paths = nostube_transcode::paths::Paths::resolve();
+            nostube_transcode::service::logs(&paths, follow, lines, system)
+                .map_err(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                })
+                .ok();
+            Ok(())
+        }
+        Some(Commands::Setup { .. })
+        | Some(Commands::Doctor { .. })
+        | Some(Commands::Config { .. }) => {
+            eprintln!("Setup/doctor/config commands coming in the next release.");
+            std::process::exit(1);
+        }
+        Some(Commands::Update { .. }) | Some(Commands::Docker { .. }) => {
+            eprintln!("Update/docker commands coming in the next release.");
+            std::process::exit(1);
         }
     }
+}
 
-    // Also try to load from the data directory's env file (used by the installer)
-    let env_path = nostube_transcode::identity::default_data_dir().join("env");
-    if env_path.exists() {
-        if let Err(e) = dotenvy::from_path(&env_path) {
-            eprintln!("Warning: Error loading env file from {:?}: {}", env_path, e);
-        }
-    }
-
-    // Initialize tracing
+fn init_tracing() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("nostube_transcode=debug".parse()?),
+                .add_directive("nostube_transcode=debug".parse().unwrap()),
         )
         .init();
-
-    info!("Starting DVM Video Processing Service");
-
-    // Remote config mode - zero config startup
-    info!("Starting in remote config mode...");
-
-    let startup = initialize().await.expect("Failed to initialize DVM");
-
-    // Create config change notifier (shared between admin handler and announcement publisher)
-    let config_notify = Arc::new(Notify::new());
-
-    // Spawn web server if enabled
-    let web_handle = if startup.config.http_enabled {
-        Some(tokio::spawn({
-            let config = startup.config.clone();
-            async move {
-                if let Err(e) = run_server(config).await {
-                    tracing::error!("Web server error: {}", e);
-                }
-            }
-        }))
-    } else {
-        info!("HTTP server disabled (DISABLE_HTTP is set)");
-        None
-    };
-
-    // Spawn admin listener
-    let admin_handle = tokio::spawn({
-        let client = startup.client.clone();
-        let keys = startup.keys.clone();
-        let state = startup.state.clone();
-        let config = startup.config.clone();
-        let config_notify = config_notify.clone();
-        async move {
-            run_admin_listener(client, keys, state, config, config_notify).await;
-        }
-    });
-
-    // Start announcement publisher
-    let hwaccel = HwAccel::detect();
-    let publisher = Arc::new(EventPublisher::new(
-        startup.config.clone(),
-        startup.client.clone(),
-        startup.state.clone(),
-    ));
-    let announcement_publisher = AnnouncementPublisher::new(
-        startup.config.clone(),
-        startup.state.clone(),
-        publisher,
-        hwaccel,
-        config_notify,
-    );
-
-    let announcement_handle = tokio::spawn(async move {
-        announcement_publisher.run().await;
-    });
-
-    // Create job processing channel
-    let (job_tx, job_rx) = tokio::sync::mpsc::channel(32);
-
-    // Spawn subscription manager (listens for kind 5207 requests)
-    let subscription_handle = tokio::spawn({
-        let config = startup.config.clone();
-        let client = startup.client.clone();
-        let state = startup.state.clone();
-        async move {
-            match SubscriptionManager::new(config, client, state).await {
-                Ok(manager) => {
-                    if let Err(e) = manager.run(job_tx).await {
-                        tracing::error!("Subscription manager error: {}", e);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create subscription manager: {}", e);
-                }
-            }
-        }
-    });
-
-    // Spawn job handler
-    let job_publisher = Arc::new(EventPublisher::new(
-        startup.config.clone(),
-        startup.client.clone(),
-        startup.state.clone(),
-    ));
-    let blossom = Arc::new(BlossomClient::new(startup.config.clone(), startup.state.clone()));
-    let processor = Arc::new(VideoProcessor::new(startup.config.clone()));
-    let job_handler = Arc::new(JobHandler::new(
-        startup.config.clone(),
-        startup.state.clone(),
-        job_publisher,
-        blossom,
-        processor,
-    ));
-
-    let job_handle = tokio::spawn(async move {
-        job_handler.run(job_rx).await;
-    });
-
-    info!("Remote config mode active. Press Ctrl+C to shutdown.");
-    shutdown_signal().await;
-
-    info!("Shutting down...");
-    if let Some(h) = web_handle { h.abort(); }
-    admin_handle.abort();
-    announcement_handle.abort();
-    subscription_handle.abort();
-    job_handle.abort();
-    let _ = startup.client.disconnect().await;
-
-    info!("Shutdown complete");
-
-    Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
 }
