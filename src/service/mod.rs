@@ -115,7 +115,7 @@ pub fn uninstall(paths: &Paths, _system: bool) -> Result<()> {
 }
 
 /// Start the service.
-pub fn start(paths: &Paths, _system: bool) -> Result<()> {
+pub fn start(_paths: &Paths, _system: bool) -> Result<()> {
     match ServiceManager::detect() {
         ServiceManager::SystemdUser => systemd::start_user(),
         ServiceManager::Launchd => launchd::start(),
