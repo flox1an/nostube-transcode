@@ -107,6 +107,63 @@ Commands:
 
 If invoked with no subcommand, the DVM runs in the foreground (backward-compatible, deprecated — use `run` explicitly).
 
+### Setup
+
+```bash
+nostube-transcode setup                          # Interactive wizard
+nostube-transcode setup --non-interactive \
+  --operator-npub npub1...                       # Scripted/CI
+```
+
+The wizard sets `OPERATOR_NPUB`, writes the env file, and optionally installs and starts the service.
+
+### Doctor
+
+```bash
+nostube-transcode doctor        # Check prerequisites and print status table
+nostube-transcode doctor --json # Machine-readable JSON output
+```
+
+Exit codes: `0` = all ok, `1` = at least one error, `2` = warnings only.
+
+### Config
+
+Reads and writes the DVM's remote configuration (stored encrypted on Nostr via NIP-78):
+
+```bash
+nostube-transcode config get                        # Display current config
+nostube-transcode config status                     # Show pubkey and pause state
+nostube-transcode config set --max-concurrent-jobs 3
+nostube-transcode config set --relays wss://relay.damus.io,wss://nos.lol
+nostube-transcode config set --blossom-servers https://cdn.satellite.earth
+nostube-transcode config set --name "My DVM" --about "Video transcoder"
+nostube-transcode config set --blob-expiration-days 60
+nostube-transcode config pause                      # Stop accepting new jobs
+nostube-transcode config resume                     # Resume accepting jobs
+```
+
+Config changes take effect after the DVM restarts (`nostube-transcode restart`).
+
+### Update
+
+```bash
+nostube-transcode update          # Check and install the latest release
+nostube-transcode update --yes    # Skip confirmation prompt
+```
+
+Downloads the appropriate binary for your platform from GitHub releases and replaces the running binary atomically.
+
+### Docker subcommands
+
+```bash
+nostube-transcode docker setup    # Run setup.sh (detect GPU, write .env, start compose)
+nostube-transcode docker status   # docker compose ps
+nostube-transcode docker logs -f  # Follow docker logs
+nostube-transcode docker start    # docker compose up -d
+nostube-transcode docker stop     # docker compose down
+nostube-transcode docker restart  # docker compose restart
+```
+
 ## Configuration
 
 The DVM requires one environment variable:
